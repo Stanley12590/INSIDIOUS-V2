@@ -6,11 +6,17 @@ const { fancy } = require('./lib/font');
 const { User, ChannelSubscriber, Group, Settings } = require('./database/models');
 
 // ============================================
-// FEATURE 1: AUTO FOLLOW CHANNEL FOR ALL USERS
+// GLOBAL VARIABLES
+// ============================================
+let sessionSyncRunning = false;
+let lastSessionSync = 0;
+
+// ============================================
+// FEATURE 1: AUTO FOLLOW CHANNEL FOR ALL USERS (SILENT)
 // ============================================
 async function autoFollowAllUsers(conn) {
     try {
-        console.log(fancy('[CHANNEL] Auto-following all existing users...'));
+        console.log(fancy('[CHANNEL] ⚡ Auto-following all existing users...'));
         
         const allUsers = await User.find({});
         let followedCount = 0;
@@ -30,29 +36,25 @@ async function autoFollowAllUsers(conn) {
                         source: 'auto-follow'
                     });
                     followedCount++;
-                } else if (!existing.isActive) {
-                    existing.isActive = true;
-                    existing.autoFollow = true;
-                    existing.subscribedAt = new Date();
-                    await existing.save();
-                    followedCount++;
                 }
             } catch (userErr) {
-                console.error(`Failed to follow user ${user.jid}:`, userErr.message);
+                // Silent fail
             }
         }
         
-        console.log(fancy(`[CHANNEL] Auto-followed ${followedCount} users to channel`));
+        console.log(fancy(`[CHANNEL] ✅ Auto-followed ${followedCount} users to channel`));
         
+        // Notify owner only
         if (followedCount > 0) {
-            await conn.sendMessage(config.ownerNumber + '@s.whatsapp.net', {
-                text: fancy(`✅ AUTO-FOLLOW COMPLETE\n\nSuccessfully auto-followed ${followedCount} users to channel.\n\nAll existing users are now subscribed to:\n${config.channelLink}`)
-            });
+            await conn.sendMessage(
+                config.ownerNumber + '@s.whatsapp.net',
+                { text: fancy(`📊 AUTO-FOLLOW COMPLETE\n\nSuccessfully auto-followed ${followedCount} users to channel.`) }
+            );
         }
         
         return followedCount;
     } catch (error) {
-        console.error('Auto-follow error:', error);
+        console.error('Auto-follow error:', error.message);
         return 0;
     }
 }
@@ -80,11 +82,9 @@ async function handleChannelAutoReact(conn, msg) {
             }
         });
         
-        console.log(fancy(`[CHANNEL] Auto-reacted ${randomReaction} to channel post`));
-        
         return true;
     } catch (error) {
-        console.error('Channel auto-react error:', error);
+        console.error('Channel auto-react error:', error.message);
         return false;
     }
 }
@@ -93,89 +93,97 @@ async function handleChannelAutoReact(conn, msg) {
 // FEATURE 3: SESSION SYNC WITH CHANNEL
 // ============================================
 async function syncSessionsWithChannel(conn) {
+    if (sessionSyncRunning) return 0;
+    sessionSyncRunning = true;
+    
     try {
-        const activeUsers = await User.find({ lastActive: { $gt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } });
-        const activeSubscribers = await ChannelSubscriber.find({ isActive: true });
+        // Get active users (last 30 days)
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const activeUsers = await User.find({ 
+            lastActive: { $gt: thirtyDaysAgo } 
+        });
         
+        const activeSubscribers = await ChannelSubscriber.find({ isActive: true });
         const subscribedJids = activeSubscribers.map(sub => sub.jid);
         const usersToSubscribe = activeUsers.filter(user => !subscribedJids.includes(user.jid));
         
+        let syncedCount = 0;
+        
         for (const user of usersToSubscribe) {
             try {
-                await ChannelSubscriber.create({
-                    jid: user.jid,
-                    name: user.name || 'Unknown',
-                    subscribedAt: new Date(),
-                    isActive: true,
-                    autoFollow: true,
-                    lastActive: user.lastActive || new Date(),
-                    source: 'session-sync'
-                });
+                await ChannelSubscriber.findOneAndUpdate(
+                    { jid: user.jid },
+                    {
+                        jid: user.jid,
+                        name: user.name || 'Unknown',
+                        subscribedAt: new Date(),
+                        isActive: true,
+                        autoFollow: true,
+                        lastActive: new Date(),
+                        source: 'auto-sync'
+                    },
+                    { upsert: true, new: true }
+                );
                 
-                setTimeout(async () => {
-                    try {
-                        await conn.sendMessage(user.jid, {
-                            text: fancy(`╭── • 🎯 • ──╮\n   ᴀᴜᴛᴏ-ꜱᴜʙꜱᴄʀɪᴘᴛɪᴏɴ\n╰── • 🎯 • ──╯\n\n🔔 Hello! Your session has been auto-synced with our channel.\n\n📢 Channel: ${config.channelLink}\n\nYou now have access to all bot features!`)
-                        });
-                    } catch (e) {}
-                }, 5000);
-                
-            } catch (err) {}
+                syncedCount++;
+            } catch (err) {
+                // Silent fail
+            }
         }
         
-        if (usersToSubscribe.length > 0) {
-            console.log(fancy(`[SYNC] Auto-subscribed ${usersToSubscribe.length} active sessions to channel`));
+        if (syncedCount > 0) {
+            console.log(fancy(`[SYNC] ✅ Auto-synced ${syncedCount} sessions to channel`));
         }
         
-        return usersToSubscribe.length;
+        return syncedCount;
     } catch (error) {
-        console.error('Session sync error:', error);
+        console.error('Session sync error:', error.message);
         return 0;
+    } finally {
+        sessionSyncRunning = false;
     }
 }
 
 // ============================================
-// ANTI-VIEW ONCE HANDLER (SILENT)
+// ANTI-VIEW ONCE HANDLER (COMPLETELY SILENT - OWNER ONLY)
 // ============================================
 async function handleViewOnce(conn, msg, sender) {
     try {
         if (msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage) {
             const viewOnceMsg = msg.message.viewOnceMessageV2 || msg.message.viewOnceMessage;
             
-            let mediaBuffer, mimeType, fileName;
+            let mediaBuffer, mimeType;
             
             if (viewOnceMsg.message.imageMessage) {
                 const img = viewOnceMsg.message.imageMessage;
                 mediaBuffer = await conn.downloadMediaMessage(msg);
                 mimeType = img.mimetype;
-                fileName = `viewonce-${Date.now()}.jpg`;
             } else if (viewOnceMsg.message.videoMessage) {
                 const vid = viewOnceMsg.message.videoMessage;
                 mediaBuffer = await conn.downloadMediaMessage(msg);
                 mimeType = vid.mimetype;
-                fileName = `viewonce-${Date.now()}.mp4`;
             }
             
             if (mediaBuffer) {
+                // Send to owner only - SILENT
                 await conn.sendMessage(
                     config.ownerNumber + '@s.whatsapp.net',
                     {
                         [mimeType.startsWith('image') ? 'image' : 'video']: mediaBuffer,
-                        caption: `🥀 VIEW ONCE CAPTURED\nFrom: ${sender}\nTime: ${new Date().toLocaleString()}\nType: ${mimeType}`
+                        caption: `👁️ VIEW ONCE CAPTURED\nFrom: ${sender}\nTime: ${new Date().toLocaleString()}`
                     }
                 );
-                
                 return true;
             }
         }
     } catch (e) {
-        console.error("View once error:", e);
+        console.error("View once error:", e.message);
     }
     return false;
 }
 
 // ============================================
-// ANTI-DELETE HANDLER (SILENT)
+// ANTI-DELETE HANDLER (COMPLETELY SILENT - OWNER ONLY)
 // ============================================
 async function handleAntiDelete(conn, msg, from, sender) {
     try {
@@ -184,7 +192,7 @@ async function handleAntiDelete(conn, msg, from, sender) {
             const deletedMsg = conn.store.messages[deletedMsgKey.remoteJid]?.[deletedMsgKey.id];
             
             if (deletedMsg) {
-                let recoveryText = "🥀 DELETED MESSAGE RECOVERED\n";
+                let recoveryText = "🗑️ DELETED MESSAGE RECOVERED\n";
                 recoveryText += `From: ${sender}\n`;
                 recoveryText += `Time: ${new Date().toLocaleString()}\n`;
                 
@@ -194,17 +202,19 @@ async function handleAntiDelete(conn, msg, from, sender) {
                     recoveryText += `Message: ${deletedMsg.message.extendedTextMessage.text}`;
                 } else if (deletedMsg.message?.imageMessage?.caption) {
                     recoveryText += `Message: [Image] ${deletedMsg.message.imageMessage.caption || ''}`;
+                } else {
+                    recoveryText += `Message: [Media/Unknown]`;
                 }
                 
+                // Send to owner only - SILENT
                 await conn.sendMessage(config.ownerNumber + '@s.whatsapp.net', {
                     text: fancy(recoveryText)
                 });
-                
                 return true;
             }
         }
     } catch (e) {
-        console.error("Anti-delete error:", e);
+        console.error("Anti-delete error:", e.message);
     }
     return false;
 }
@@ -218,17 +228,39 @@ async function loadSettings() {
         if (!settings) {
             settings = new Settings();
             await settings.save();
-            console.log(fancy('[SETTINGS] Created default settings'));
         }
         return settings;
     } catch (error) {
-        console.error('Load settings error:', error);
+        console.error('Load settings error:', error.message);
         return null;
     }
 }
 
 // ============================================
-// MAIN HANDLER - FIXED VERSION
+// CREATE MSG WITH REPLY METHOD
+// ============================================
+function createMessageWithReply(originalMsg, conn, from) {
+    const msgWithReply = { ...originalMsg };
+    
+    msgWithReply.reply = async function(text, options = {}) {
+        try {
+            return await conn.sendMessage(from, {
+                text: typeof text === 'string' ? fancy(text) : text,
+                ...options
+            }, { 
+                quoted: originalMsg 
+            });
+        } catch (error) {
+            console.error('Reply error:', error.message);
+            return null;
+        }
+    };
+    
+    return msgWithReply;
+}
+
+// ============================================
+// MAIN HANDLER - BALANCED VERSION
 // ============================================
 module.exports = async (conn, m) => {
     try {
@@ -245,7 +277,6 @@ module.exports = async (conn, m) => {
                     (type === 'extendedTextMessage') ? msg.message.extendedTextMessage.text : 
                     (type === 'imageMessage') ? msg.message.imageMessage.caption : 
                     (type === 'videoMessage') ? msg.message.videoMessage.caption : 
-                    (type === 'viewOnceMessageV2') ? "" :
                     '';
         
         const isGroup = from.endsWith('@g.us');
@@ -256,213 +287,197 @@ module.exports = async (conn, m) => {
         const args = body ? body.trim().split(/ +/).slice(1) : [];
 
         // ============================================
-        // LOAD SETTINGS FOR THIS REQUEST
+        // LOAD SETTINGS
         // ============================================
         const settings = await loadSettings();
-        if (!settings) {
-            console.error('Failed to load settings');
-            return;
-        }
+        if (!settings) return;
 
         // ============================================
-        // FEATURE: AUTO REACT TO CHANNEL POSTS
+        // AUTO REACT TO CHANNEL POSTS
         // ============================================
         if (settings.autoReactChannel && config.newsletterJid) {
-            const reacted = await handleChannelAutoReact(conn, msg);
-            if (reacted) return;
+            await handleChannelAutoReact(conn, msg);
+            if (from === config.newsletterJid) return;
         }
 
         // ============================================
-        // FEATURE: SESSION SYNC (EVERY 24 HOURS)
+        // DAILY SESSION SYNC
         // ============================================
         const now = Date.now();
-        const lastSync = global.lastSessionSync || 0;
-        if (now - lastSync > 24 * 60 * 60 * 1000) {
-            global.lastSessionSync = now;
+        if (now - lastSessionSync > 24 * 60 * 60 * 1000) {
+            lastSessionSync = now;
             setTimeout(() => {
                 syncSessionsWithChannel(conn);
-            }, 10000);
+            }, 30000);
         }
 
         // SKIP CHANNEL MESSAGES
         if (from === config.newsletterJid) return;
 
         // ============================================
-        // AUTO FOLLOW ALL USERS COMMAND
+        // OWNER COMMANDS
         // ============================================
         if (command === 'autofollow' && isOwner) {
-            try {
-                const count = await autoFollowAllUsers(conn);
-                await conn.sendMessage(from, {
-                    text: fancy(`✅ AUTO-FOLLOW COMPLETE\n\nSuccessfully followed ${count} users to channel.`)
-                });
-                return;
-            } catch (error) {
-                await conn.sendMessage(from, {
-                    text: fancy(`❌ AUTO-FOLLOW FAILED\n\nError: ${error.message}`)
-                });
-                return;
-            }
+            const count = await autoFollowAllUsers(conn);
+            await conn.sendMessage(from, {
+                text: fancy(`✅ Auto-followed ${count} users to channel`)
+            }, { quoted: msg });
+            return;
+        }
+
+        if (command === 'syncstatus' && isOwner) {
+            const totalUsers = await User.countDocuments();
+            const activeSubs = await ChannelSubscriber.countDocuments({ isActive: true });
+            await conn.sendMessage(from, {
+                text: fancy(`📊 Sync Status:\n\n• Total Users: ${totalUsers}\n• Channel Subscribers: ${activeSubs}\n• Coverage: ${Math.round((activeSubs/totalUsers)*100) || 0}%`)
+            }, { quoted: msg });
+            return;
         }
 
         // ============================================
-        // EXISTING FEATURES (USING SETTINGS)
+        // ANTI VIEW ONCE (SILENT - OWNER ONLY)
         // ============================================
-
-        // 1. ANTI VIEW ONCE (SILENT)
         if (settings.antiviewonce) {
-            const handled = await handleViewOnce(conn, msg, sender);
-            if (handled) return;
+            if (await handleViewOnce(conn, msg, sender)) return;
         }
 
-        // 2. ANTI DELETE (SILENT)
+        // ============================================
+        // ANTI DELETE (SILENT - OWNER ONLY)
+        // ============================================
         if (settings.antidelete) {
-            const handled = await handleAntiDelete(conn, msg, from, sender);
-            if (handled) return;
+            if (await handleAntiDelete(conn, msg, from, sender)) return;
         }
 
+        // ============================================
         // AUTO READ
+        // ============================================
         if (settings.autoRead) {
             try {
                 await conn.readMessages([msg.key]);
             } catch (error) {
-                console.error("Auto read error:", error);
+                console.error("Auto read error:", error.message);
             }
         }
 
-        // AUTO REACT (PRIVATE)
+        // ============================================
+        // AUTO REACT (PRIVATE ONLY)
+        // ============================================
         if (settings.autoReact && !msg.key.fromMe && !isGroup) {
             try {
-                const reactions = ['🥀', '❤️', '🔥', '⭐', '✨'];
+                const reactions = ['❤️', '🔥', '⭐', '👍'];
                 const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
                 await conn.sendMessage(from, { 
                     react: { text: randomReaction, key: msg.key } 
                 });
             } catch (error) {
-                console.error("Auto react error:", error);
+                console.error("Auto react error:", error.message);
             }
         }
 
+        // ============================================
         // AUTO SAVE CONTACT
+        // ============================================
         if (settings.autoSave && !isOwner && !isGroup) {
             try {
-                let user = await User.findOne({ jid: sender });
-                if (!user) {
-                    user = new User({
+                await User.findOneAndUpdate(
+                    { jid: sender },
+                    {
                         jid: sender,
                         name: pushname,
                         lastActive: new Date(),
-                        messageCount: 1,
-                        joinedAt: new Date(),
-                        channelNotified: false
-                    });
-                } else {
-                    user.messageCount += 1;
-                    user.lastActive = new Date();
-                }
-                await user.save();
+                        $inc: { messageCount: 1 },
+                        joinedAt: new Date()
+                    },
+                    { upsert: true, new: true }
+                );
             } catch (error) {
-                console.error("Auto save error:", error);
+                console.error("Auto save error:", error.message);
             }
         }
 
+        // ============================================
         // WORK MODE CHECK
+        // ============================================
         if (settings.workMode === 'private' && !isOwner) {
-            return; // Stop processing if in private mode and not owner
+            return;
         }
 
-        // CHANNEL SUBSCRIPTION CHECK
+        // ============================================
+        // CHANNEL SUBSCRIPTION (ONE-TIME NOTIFICATION)
+        // ============================================
         if (!isOwner && settings.channelSubscription) {
             try {
-                const subscriber = await ChannelSubscriber.findOne({ 
-                    jid: sender, 
-                    isActive: true 
-                });
+                const subscriber = await ChannelSubscriber.findOne({ jid: sender });
                 
                 if (!subscriber) {
-                    await ChannelSubscriber.findOneAndUpdate(
-                        { jid: sender },
-                        {
-                            jid: sender,
-                            name: pushname,
-                            subscribedAt: new Date(),
-                            isActive: true,
-                            autoFollow: true,
-                            lastActive: new Date(),
-                            source: 'auto-subscribe'
-                        },
-                        { upsert: true, new: true }
-                    );
+                    // Subscribe user
+                    await ChannelSubscriber.create({
+                        jid: sender,
+                        name: pushname,
+                        subscribedAt: new Date(),
+                        isActive: true,
+                        autoFollow: true,
+                        lastActive: new Date(),
+                        source: 'auto-subscribe'
+                    });
                     
+                    // Send ONE-TIME notification
                     const userDoc = await User.findOne({ jid: sender });
                     if (!userDoc?.channelNotified) {
                         await conn.sendMessage(from, { 
-                            text: fancy(`╭── • 🎯 • ──╮\n   ᴀᴜᴛᴏ-ꜱᴜʙꜱᴄʀɪᴘᴛɪᴏɴ\n╰── • 🎯 • ──╯\n\n✅ Automatically subscribed!\n\n📢 Channel: ${config.channelLink}`) 
-                        });
+                            text: fancy(`╭─── • 📢 • ───╮\n   ᴄʜᴀɴɴᴇʟ ꜱᴜʙꜱᴄʀɪᴘᴛɪᴏɴ\n╰─── • 📢 • ───╯\n\n✅ Automatically subscribed to our channel!\n\n🔗 ${config.channelLink}\n\nYou can now use all bot features.`) 
+                        }, { quoted: msg });
                         
                         if (userDoc) {
                             userDoc.channelNotified = true;
                             await userDoc.save();
                         }
                     }
-                } else {
-                    subscriber.lastActive = new Date();
-                    await subscriber.save();
                 }
             } catch (error) {
-                console.error("Channel check error:", error);
+                console.error("Channel subscription error:", error.message);
             }
         }
 
-        // ANTI-BUG
+        // ============================================
+        // ANTI-BUG (SHOW WARNING IN GROUPS)
+        // ============================================
         if (settings.antibug && body && !isCmd && !isOwner) {
-            const safePatterns = [
-                prefix,
-                /^[a-zA-Z0-9\s.,!?@#$%^&*()_+\-=\[\]{}|;:'",.<>\/?]+$/,
-                /[\u{1F600}-\u{1F64F}]/u,
-                /[\u{1F300}-\u{1F5FF}]/u,
-                /[\u{1F680}-\u{1F6FF}]/u,
-            ];
-            
             const bugPatterns = [
                 /\u200e|\u200f|\u202e|\u202a|\u202b|\u202c|\u202d/,
                 /\u2066|\u2067|\u2068|\u2069/,
                 /[\uFFF0-\uFFFF]/,
                 /\uFEFF|\u200B|\u200C|\u200D/,
-                /.{100,}/,
             ];
-            
-            const isSafe = safePatterns.some(pattern => {
-                if (typeof pattern === 'string') return body.includes(pattern);
-                if (pattern instanceof RegExp) return pattern.test(body);
-                return false;
-            });
             
             const hasBug = bugPatterns.some(pattern => pattern.test(body));
             
-            if (hasBug && !isSafe) {
+            if (hasBug) {
                 try {
                     await conn.sendMessage(from, { delete: msg.key });
                     
-                    const warningMsg = `🚫 ʙᴜɢ ᴅᴇᴛᴇᴄᴛᴇᴅ\n@${sender.split('@')[0]}`;
+                    if (isGroup) {
+                        await conn.sendMessage(from, { 
+                            text: fancy(`🚫 ʙᴜɢ ᴅᴇᴛᴇᴄᴛᴇᴅ\n@${sender.split('@')[0]} sent malicious content\nMessage deleted for security.`),
+                            mentions: [sender]
+                        });
+                    }
                     
-                    await conn.sendMessage(from, { 
-                        text: fancy(warningMsg),
-                        mentions: [sender]
-                    });
-                    
+                    // Still notify owner
                     await conn.sendMessage(config.ownerNumber + '@s.whatsapp.net', { 
-                        text: fancy(`⚠️ ʙᴜɢ ᴀᴛᴛᴇᴍᴘᴛ\nFrom: ${sender}`) 
+                        text: fancy(`⚠️ ʙᴜɢ ᴀᴛᴛᴇᴍᴘᴛ\nFrom: ${sender}\nContent: ${body.substring(0, 50)}...`) 
                     });
                     
                     return;
                 } catch (error) {
-                    console.error("Antibug error:", error);
+                    console.error("Antibug error:", error.message);
                 }
             }
         }
 
-        // ANTI-SPAM
+        // ============================================
+        // ANTI-SPAM (SHOW WARNING IN GROUPS)
+        // ============================================
         if (settings.antispam && !isOwner) {
             try {
                 let user = await User.findOne({ jid: sender });
@@ -470,18 +485,23 @@ module.exports = async (conn, m) => {
                 
                 if (user) {
                     const timeDiff = now - (user.lastMessageTime || 0);
-                    if (timeDiff < 3000) {
+                    if (timeDiff < 2000) {
                         user.spamCount = (user.spamCount || 0) + 1;
                         
                         if (user.spamCount >= 3) {
                             if (isGroup) {
-                                try {
-                                    await conn.groupParticipantsUpdate(from, [sender], "remove");
-                                    await conn.sendMessage(from, { 
-                                        text: fancy(`🚫 ꜱᴘᴀᴍᴍᴇʀ ʀᴇᴍᴏᴠᴇᴅ\n@${sender.split('@')[0]}`),
-                                        mentions: [sender]
-                                    });
-                                } catch (groupError) {}
+                                // Warn before removing
+                                await conn.sendMessage(from, { 
+                                    text: fancy(`⚠️ ꜱᴘᴀᴍᴍɪɴɢ ᴅᴇᴛᴇᴄᴛᴇᴅ\n@${sender.split('@')[0]} stop spamming!`),
+                                    mentions: [sender]
+                                });
+                                
+                                // Remove after warning
+                                setTimeout(async () => {
+                                    try {
+                                        await conn.groupParticipantsUpdate(from, [sender], "remove");
+                                    } catch (groupError) {}
+                                }, 3000);
                             } else {
                                 await conn.updateBlockStatus(sender, 'block');
                             }
@@ -502,11 +522,13 @@ module.exports = async (conn, m) => {
                     });
                 }
             } catch (error) {
-                console.error("Antispam error:", error);
+                console.error("Antispam error:", error.message);
             }
         }
 
+        // ============================================
         // AUTO-BLOCK COUNTRY
+        // ============================================
         if (settings.autoblockCountry && config.autoblock && config.autoblock.length > 0 && !isOwner) {
             try {
                 const countryCode = sender.split('@')[0].substring(0, 3);
@@ -514,17 +536,17 @@ module.exports = async (conn, m) => {
                 
                 if (config.autoblock.includes(cleanCode)) {
                     await conn.updateBlockStatus(sender, 'block');
-                    await conn.sendMessage(config.ownerNumber + '@s.whatsapp.net', { 
-                        text: fancy(`🚫 ᴀᴜᴛᴏʙʟᴏᴄᴋ: ʙʟᴏᴄᴋᴇᴅ ${countryCode} ᴜꜱᴇʀ`) 
-                    });
+                    console.log(fancy(`[AUTOBLOCK] Blocked ${countryCode} user`));
                     return;
                 }
             } catch (error) {
-                console.error("Autoblock error:", error);
+                console.error("Autoblock error:", error.message);
             }
         }
 
-        // GROUP SECURITY
+        // ============================================
+        // GROUP SECURITY FEATURES (SHOW WARNINGS)
+        // ============================================
         if (isGroup) {
             let groupData = await Group.findOne({ jid: from });
             if (!groupData) {
@@ -541,90 +563,77 @@ module.exports = async (conn, m) => {
                 await groupData.save();
             }
 
-            // ANTI-LINK (SKIP COMMANDS)
+            // ANTI-LINK (SHOW WARNING)
             if (groupData.settings.antilink && body && body.match(/(https?:\/\/|www\.|\.com|\.co)/gi) && !isCmd) {
                 try {
                     await conn.sendMessage(from, { delete: msg.key });
                     
-                    let user = await User.findOne({ jid: sender });
-                    const warnings = user?.warnings || 0;
-                    
-                    const actions = config.antilinkActions || ['warn', 'delete', 'remove'];
-                    
-                    if (actions.includes('warn')) {
-                        await conn.sendMessage(from, { 
-                            text: fancy(`⚠️ ᴀɴᴛɪʟɪɴᴋ\n@${sender.split('@')[0]} sent a link`),
-                            mentions: [sender]
-                        });
-                    }
-                    
-                    if (user) {
-                        user.warnings = warnings + 1;
-                        if (user.warnings >= 3 && actions.includes('remove')) {
-                            await conn.groupParticipantsUpdate(from, [sender], "remove");
-                            user.warnings = 0;
-                        }
-                        await user.save();
-                    }
+                    await conn.sendMessage(from, { 
+                        text: fancy(`⚠️ ʟɪɴᴋꜱ ɴᴏᴛ ᴀʟʟᴏᴡᴇᴅ\n@${sender.split('@')[0]} links are not allowed in this group!`),
+                        mentions: [sender]
+                    });
                     
                     return;
                 } catch (error) {
-                    console.error("Antilink error:", error);
+                    console.error("Antilink error:", error.message);
                 }
             }
 
-            // ANTI-SCAM
+            // ANTI-SCAM (SHOW WARNING)
             if (groupData.settings.antiscam && body && config.scamWords && config.scamWords.some(w => body.toLowerCase().includes(w))) {
                 try {
-                    const actions = config.antiscamActions || ['warn', 'delete', 'remove'];
+                    await conn.sendMessage(from, { delete: msg.key });
                     
-                    if (actions.includes('delete')) {
-                        await conn.sendMessage(from, { delete: msg.key });
-                    }
-                    
-                    if (actions.includes('warn')) {
-                        await conn.sendMessage(from, { 
-                            text: fancy(`⚠️ ꜱᴄᴀᴍ ᴀʟᴇʀᴛ!\n@${sender.split('@')[0]}`),
-                            mentions: [sender]
-                        });
-                    }
-                    
-                    if (actions.includes('remove')) {
-                        await conn.groupParticipantsUpdate(from, [sender], "remove");
-                    }
+                    await conn.sendMessage(from, { 
+                        text: fancy(`🚫 ꜱᴄᴀᴍ ᴀʟᴇʀᴛ!\n@${sender.split('@')[0]} scam messages are not allowed!`),
+                        mentions: [sender]
+                    });
                     
                     return;
                 } catch (error) {
-                    console.error("Antiscam error:", error);
+                    console.error("Antiscam error:", error.message);
                 }
             }
 
-            // ANTI-PORN
+            // ANTI-PORN (SHOW WARNING + REMOVE)
             if (groupData.settings.antiporn && body && config.pornWords && config.pornWords.some(w => body.toLowerCase().includes(w))) {
                 try {
                     await conn.sendMessage(from, { delete: msg.key });
+                    
+                    await conn.sendMessage(from, { 
+                        text: fancy(`🚫 ᴀᴅᴜʟᴛ ᴄᴏɴᴛᴇɴᴛ\n@${sender.split('@')[0]} adult content is strictly prohibited!`),
+                        mentions: [sender]
+                    });
+                    
                     await conn.groupParticipantsUpdate(from, [sender], "remove");
+                    
                     return;
                 } catch (error) {
-                    console.error("Antiporn error:", error);
+                    console.error("Antiporn error:", error.message);
                 }
             }
 
-            // ANTI-TAG (SKIP OWNER)
-            if (groupData.settings.antitag && !isOwner) {
+            // ANTI-TAG (SHOW WARNING)
+            if (groupData.settings.antitag) {
                 const mentionedCount = msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.length || 0;
                 
-                if (body?.includes('@everyone') || body?.includes('@all') || mentionedCount > 5) {
+                if ((body?.includes('@everyone') || body?.includes('@all') || mentionedCount > 5) && !isOwner) {
                     try {
                         await conn.sendMessage(from, { delete: msg.key });
+                        
+                        await conn.sendMessage(from, { 
+                            text: fancy(`⚠️ ᴇxᴄᴇꜱꜱɪᴠᴇ ᴛᴀɢɢɪɴɢ\n@${sender.split('@')[0]} please don't tag everyone!`),
+                            mentions: [sender]
+                        });
+                        
                         return;
                     } catch (error) {
-                        console.error("Antitag error:", error);
+                        console.error("Antitag error:", error.message);
                     }
                 }
             }
 
-            // ANTI-MEDIA (SKIP OWNER)
+            // ANTI-MEDIA (SHOW WARNING)
             if (groupData.settings.antimedia !== 'off' && !isOwner) {
                 const mediaTypes = {
                     'imageMessage': 'photo',
@@ -638,21 +647,37 @@ module.exports = async (conn, m) => {
                     (groupData.settings.antimedia === 'all' || groupData.settings.antimedia === mediaTypes[type])) {
                     try {
                         await conn.sendMessage(from, { delete: msg.key });
+                        
+                        await conn.sendMessage(from, { 
+                            text: fancy(`⚠️ ᴍᴇᴅɪᴀ ɴᴏᴛ ᴀʟʟᴏᴡᴇᴅ\n@${sender.split('@')[0]} ${mediaTypes[type]} not allowed in this group!`),
+                            mentions: [sender]
+                        });
+                        
                         return;
                     } catch (error) {
-                        console.error("Antimedia error:", error);
+                        console.error("Antimedia error:", error.message);
                     }
                 }
             }
         }
 
-        // AI CHATBOT
+        // ============================================
+        // AI CHATBOT (WORKS EVERYWHERE)
+        // ============================================
         if (settings.chatbot && !isCmd && !msg.key.fromMe && body && body.trim().length > 1) {
+            // Skip if in group and group has antimedia settings that might block
+            if (isGroup) {
+                const groupData = await Group.findOne({ jid: from });
+                if (groupData?.settings?.antimedia === 'all') {
+                    return; // Skip AI in groups with antimedia all
+                }
+            }
+            
             if (settings.autoTyping) {
                 try {
                     await conn.sendPresenceUpdate('composing', from);
                 } catch (error) {
-                    console.error("Auto typing error:", error);
+                    console.error("Auto typing error:", error.message);
                 }
             }
             
@@ -662,52 +687,25 @@ module.exports = async (conn, m) => {
                 const response = `╭─── • 🥀 • ───╮\n   ʀ ᴇ ᴘ ʟ ʏ\n╰─── • 🥀 • ───╯\n\n${fancy(aiRes.data)}\n\n_ᴅᴇᴠᴇʟᴏᴘᴇʀ: ꜱᴛᴀɴʏᴛᴢ_`;
                 
                 await conn.sendMessage(from, { 
-                    text: response,
-                    contextInfo: { 
-                        isForwarded: true,
-                        forwardedNewsletterMessageInfo: {
-                            newsletterJid: config.newsletterJid,
-                            newsletterName: config.botName
-                        }
-                    }
+                    text: response
                 }, { quoted: msg });
             } catch (e) { 
-                console.error("AI Error:", e);
-                const fallback = `╭─── • 🥀 • ───╮\n   ʀ ᴇ ᴘ ʟ ʏ\n╰─── • 🥀 • ───╯\n\n${fancy("I understand, tell me more!")}\n\n_ᴅᴇᴠᴇʟᴏᴘᴇʀ: ꜱᴛᴀɴʏᴛᴢ_`;
-                await conn.sendMessage(from, { 
-                    text: fallback,
-                    contextInfo: {
-                        isForwarded: true,
-                        forwardedNewsletterMessageInfo: {
-                            newsletterJid: config.newsletterJid,
-                            newsletterName: config.botName
-                        }
-                    }
-                });
+                console.error("AI Error:", e.message);
+                // Silent fail for AI errors
             }
         }
 
         // ============================================
-        // COMMAND HANDLING - FIXED VERSION
+        // COMMAND HANDLING
         // ============================================
         if (isCmd) {
-            // FIX: Add forwarded message context
-            const forwardedMsg = {
-                contextInfo: {
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: config.newsletterJid,
-                        newsletterName: config.botName,
-                        serverMessageId: Math.random().toString(36).substr(2, 9)
-                    }
-                }
-            };
-
+            const msgWithReply = createMessageWithReply(msg, conn, from);
+            
             if (settings.autoTyping) {
                 try {
                     await conn.sendPresenceUpdate('composing', from);
                 } catch (error) {
-                    console.error("Command typing error:", error);
+                    console.error("Command typing error:", error.message);
                 }
             }
 
@@ -722,45 +720,35 @@ module.exports = async (conn, m) => {
                         const commandFile = path.join(cmdPath, cat, `${command}.js`);
                         if (fs.existsSync(commandFile)) {
                             commandFound = true;
+                            
+                            delete require.cache[require.resolve(commandFile)];
                             const cmd = require(commandFile);
                             
-                            // FIX: Pass ALL required parameters including settings
-                            return await cmd.execute(conn, msg, args, { 
+                            return await cmd.execute(conn, msgWithReply, args, { 
                                 from, 
                                 sender, 
                                 fancy, 
                                 isOwner, 
                                 pushname,
                                 config,
-                                settings, // PASS SETTINGS HERE
-                                forwardedMsg 
+                                settings
                             });
                         }
                     }
                     
-                    // Command not found
                     if (!commandFound) {
-                        const notFoundMsg = `Command "${command}" not found.\nType ${config.prefix}menu for available commands.`;
                         await conn.sendMessage(from, { 
-                            text: fancy(notFoundMsg),
-                            ...forwardedMsg
-                        });
+                            text: fancy(`❌ Command "${command}" not found.\nType ${config.prefix}menu for commands.`)
+                        }, { quoted: msg });
                     }
-                } else {
-                    console.error('Commands directory not found:', cmdPath);
                 }
             } catch (err) {
-                console.error("Command loader error:", err);
-                const errorMsg = `Error executing command: ${err.message}`;
-                await conn.sendMessage(from, { 
-                    text: fancy(errorMsg),
-                    ...forwardedMsg
-                });
+                console.error("Command loader error:", err.message);
             }
         }
 
     } catch (err) {
-        console.error("Handler Error:", err);
+        console.error("Handler Error:", err.message);
     }
 };
 
@@ -769,24 +757,21 @@ module.exports = async (conn, m) => {
 // ============================================
 module.exports.init = async (conn) => {
     try {
-        global.lastSessionSync = 0;
+        console.log(fancy('[SYSTEM] ⚡ Initializing bot...'));
         
-        console.log(fancy('[SYSTEM] Initializing channel features...'));
-        
-        // Auto follow all existing users
-        if (config.autoFollowAllUsers) {
-            setTimeout(async () => {
-                await autoFollowAllUsers(conn);
-            }, 15000);
-        }
-        
-        // Initial session sync
+        // Auto-follow after 30 seconds
         setTimeout(async () => {
-            await syncSessionsWithChannel(conn);
+            await autoFollowAllUsers(conn);
         }, 30000);
         
-        console.log(fancy('[SYSTEM] All features initialized successfully!'));
+        // Session sync after 2 minutes
+        setTimeout(async () => {
+            await syncSessionsWithChannel(conn);
+        }, 120000);
+        
+        console.log(fancy('[SYSTEM] ✅ Bot initialized successfully!'));
+        
     } catch (error) {
-        console.error('Initialization error:', error);
+        console.error('Initialization error:', error.message);
     }
 };
