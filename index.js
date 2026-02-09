@@ -1,4 +1,4 @@
-const {
+ const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
@@ -12,10 +12,9 @@ const mongoose = require("mongoose");
 const path = require("path");
 const axios = require("axios");
 const cron = require("node-cron");
-const fs = require("fs").promises;
 const { fancy } = require("./lib/font");
 const config = require("./config");
-const { User, Group, ChannelSubscriber, Settings, Session } = require('./database/models');
+const { User, Group, ChannelSubscriber, Settings } = require('./database/models');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,14 +43,12 @@ app.get('/api/stats', async (req, res) => {
         const users = await User.countDocuments();
         const groups = await Group.countDocuments();
         const subscribers = await ChannelSubscriber.countDocuments();
-        const sessions = await Session.countDocuments();
         const settings = await Settings.findOne();
         
         res.json({
             users,
             groups,
             subscribers,
-            sessions,
             settings: settings || {},
             uptime: process.uptime(),
             version: config.version,
@@ -88,6 +85,7 @@ app.get('/api/features', async (req, res) => {
                 downloadStatus: settings.downloadStatus,
                 antispam: settings.antispam,
                 antibug: settings.antibug
+                // BUG FEATURE REMOVED
             }
         });
     } catch (error) {
@@ -125,41 +123,11 @@ app.post('/api/settings', async (req, res) => {
     }
 });
 
-// AUTO-CONNECT TO ALL SESSIONS FROM DATABASE
-async function loadAllSessions() {
-    try {
-        const sessions = await Session.find({ isActive: true });
-        const activeConnections = [];
-        
-        for (const session of sessions) {
-            try {
-                console.log(fancy(`🔄 Connecting session: ${session.sessionId}`));
-                const conn = await startBotSession(session.sessionId, session.jid);
-                if (conn) {
-                    activeConnections.push({
-                        sessionId: session.sessionId,
-                        jid: session.jid,
-                        connection: conn,
-                        connectedAt: new Date()
-                    });
-                }
-            } catch (error) {
-                console.error(`Failed to connect session ${session.sessionId}:`, error);
-            }
-        }
-        
-        return activeConnections;
-    } catch (error) {
-        console.error("Error loading sessions:", error);
-        return [];
-    }
-}
-
-let globalConnections = new Map();
+let globalConn = null;
 let qrCodeData = null;
 
-async function startInsidious(sessionId = "default") {
-    const { state, saveCreds } = await useMultiFileAuthState(`./sessions/${sessionId}`);
+async function startInsidious() {
+    const { state, saveCreds } = await useMultiFileAuthState(config.sessionName);
     const { version } = await fetchLatestBaileysVersion();
 
     const conn = makeWASocket({
@@ -174,13 +142,15 @@ async function startInsidious(sessionId = "default") {
         getMessage: async (key) => ({ conversation: "message deleted" })
     });
 
+    globalConn = conn;
+
     // HANDLE QR CODE
     conn.ev.on('connection.update', async (update) => {
         const { connection, qr } = update;
         
         if (qr) {
-            qrCodeData = { sessionId, qr };
-            console.log(fancy(`📱 Scan QR Code for session ${sessionId}:`));
+            qrCodeData = qr;
+            console.log(fancy("📱 Scan QR Code below:"));
             try {
                 const qrcode = require('qrcode-terminal');
                 qrcode.generate(qr, { small: true });
@@ -190,29 +160,10 @@ async function startInsidious(sessionId = "default") {
         }
         
         if (connection === 'open') {
-            console.log(fancy(`👹 Session ${sessionId} is alive and connected.`));
+            console.log(fancy("👹 insidious is alive and connected."));
             qrCodeData = null;
             
             try {
-                // Save session to database
-                const sessionDoc = await Session.findOneAndUpdate(
-                    { sessionId },
-                    {
-                        sessionId,
-                        jid: conn.user?.id,
-                        isActive: true,
-                        lastConnected: new Date(),
-                        deviceInfo: {
-                            platform: "WhatsApp Web",
-                            browser: "Safari"
-                        }
-                    },
-                    { upsert: true, new: true }
-                );
-                
-                // Add to global connections
-                globalConnections.set(sessionId, { conn, session: sessionDoc });
-                
                 // Initialize settings if not exist
                 let settings = await Settings.findOne();
                 if (!settings) {
@@ -221,7 +172,7 @@ async function startInsidious(sessionId = "default") {
                 }
                 
                 // Send minimal welcome to owner
-                if (config.sendWelcomeToOwner && sessionId === "default") {
+                if (config.sendWelcomeToOwner) {
                     const ownerJid = config.ownerNumber + '@s.whatsapp.net';
                     const welcomeMsg = `╭─── • 🥀 • ───╮\n   ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ${config.version}\n╰─── • 🥀 • ───╯\n\n✅ Bot is online!\n📊 Dashboard: http://localhost:${PORT}\n\n${fancy(config.footer)}`;
                     await conn.sendMessage(ownerJid, { text: welcomeMsg });
@@ -234,24 +185,72 @@ async function startInsidious(sessionId = "default") {
         
         if (connection === 'close') {
             const shouldReconnect = update.lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            if (shouldReconnect) {
+                console.log(fancy("🔄 Reconnecting..."));
+                setTimeout(startInsidious, 5000);
+            }
+        }
+    });
+
+    // QR CODE API
+    app.get('/api/qr', (req, res) => {
+        if (globalConn?.user) {
+            return res.json({ 
+                status: 'connected', 
+                user: globalConn.user.id 
+            });
+        }
+        
+        if (qrCodeData) {
+            res.json({ 
+                qr: qrCodeData,
+                status: 'waiting'
+            });
+        } else {
+            res.json({ 
+                qr: null, 
+                status: 'no_qr' 
+            });
+        }
+    });
+
+    // PAIRING ENDPOINT
+    app.get('/pair', async (req, res) => {
+        let num = req.query.num;
+        if (!num) return res.json({ error: "Provide a number!" });
+        
+        try {
+            const cleanNum = num.replace(/[^0-9]/g, '');
             
-            // Update session status in database
-            await Session.findOneAndUpdate(
-                { sessionId },
-                { 
-                    isActive: false,
-                    lastDisconnected: new Date(),
-                    disconnectReason: update.lastDisconnect?.error?.output?.statusCode || "unknown"
-                }
+            // Generate pairing code
+            const code = await conn.requestPairingCode(cleanNum);
+            
+            // Save/Update user
+            await User.findOneAndUpdate(
+                { jid: cleanNum + '@s.whatsapp.net' },
+                {
+                    jid: cleanNum + '@s.whatsapp.net',
+                    deviceId: Math.random().toString(36).substr(2, 8),
+                    linkedAt: new Date(),
+                    isActive: true,
+                    mustFollowChannel: true,
+                    lastPair: new Date()
+                },
+                { upsert: true, new: true }
             );
             
-            // Remove from global connections
-            globalConnections.delete(sessionId);
+            res.json({ 
+                success: true, 
+                code: code,
+                message: "Scan code in WhatsApp Linked Devices"
+            });
             
-            if (shouldReconnect) {
-                console.log(fancy(`🔄 Reconnecting session ${sessionId}...`));
-                setTimeout(() => startInsidious(sessionId), 5000);
-            }
+        } catch (err) {
+            console.error("Pairing error:", err);
+            res.json({ 
+                error: "Pairing failed. Try again.",
+                details: err.message 
+            });
         }
     });
 
@@ -263,10 +262,10 @@ async function startInsidious(sessionId = "default") {
         if (!msg.message) return;
 
         // Pass to Master Handler
-        require('./handler')(conn, m, sessionId);
+        require('./handler')(conn, m);
     });
 
-    // GROUP PARTICIPANTS UPDATE - IMPROVED WELCOME/GOODBYE
+    // GROUP PARTICIPANTS UPDATE
     conn.ev.on('group-participants.update', async (anu) => {
         try {
             const settings = await Settings.findOne();
@@ -275,63 +274,23 @@ async function startInsidious(sessionId = "default") {
             const metadata = await conn.groupMetadata(anu.id);
             const participants = anu.participants;
             
-            // Get group description
-            let groupDesc = "No description";
-            try {
-                const desc = await conn.groupFetchAllParticipating();
-                if (desc[anu.id]?.desc) {
-                    groupDesc = desc[anu.id].desc.substring(0, 100) + (desc[anu.id].desc.length > 100 ? "..." : "");
-                }
-            } catch (e) {}
-            
-            // Get group profile picture
-            let groupPicture = null;
-            try {
-                groupPicture = await conn.profilePictureUrl(anu.id, 'image');
-            } catch (e) {}
-            
-            // Get random quote
-            let quote = "Welcome to the Further.";
-            try {
-                const quoteRes = await axios.get('https://api.quotable.io/random', { timeout: 3000 });
-                quote = quoteRes.data.content;
-            } catch (e) {}
-
             for (let num of participants) {
+                let quote = "Welcome to the Further.";
+                try {
+                    const quoteRes = await axios.get('https://api.quotable.io/random', { timeout: 3000 });
+                    quote = quoteRes.data.content;
+                } catch (e) {}
+
                 if (anu.action == 'add') {
-                    // WELCOME MESSAGE WITH GROUP IMAGE AND DESCRIPTION
-                    const welcomeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ɴᴇᴡ ꜱᴏᴜʟ ᴅᴇᴛᴇᴄᴛᴇᴅ")}\n╰── • 🥀 • ──╯\n\n📛 *Group:* ${metadata.subject}\n👥 *Members:* ${metadata.participants.length}\n📝 *Description:* ${groupDesc}\n\n🎉 Welcome @${num.split("@")[0]}!\n\n💬 *Quote of the Day:*\n"${fancy(quote)}"\n\n${fancy(config.footer)}`;
+                    const welcomeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ɴᴇᴡ ꜱᴏᴜʟ ᴅᴇᴛᴇᴄᴛᴇᴅ")}\n╰── • 🥀 • ──╯\n\n│ ◦ Welcome @${num.split("@")[0]}\n│ ◦ Group: ${metadata.subject}\n│ ◦ Members: ${metadata.participants.length}\n\n🥀 "${fancy(quote)}"\n\n${fancy(config.footer)}`;
                     
-                    // Send image if available, otherwise text
-                    if (groupPicture) {
-                        await conn.sendMessage(anu.id, {
-                            image: { url: groupPicture },
-                            caption: welcomeMsg,
-                            mentions: [num]
-                        });
-                    } else {
-                        await conn.sendMessage(anu.id, { 
-                            text: welcomeMsg,
-                            mentions: [num] 
-                        });
-                    }
-                    
-                    // Log to database
-                    await Group.findOneAndUpdate(
-                        { jid: anu.id },
-                        {
-                            jid: anu.id,
-                            name: metadata.subject,
-                            participants: metadata.participants.length,
-                            lastActivity: new Date()
-                        },
-                        { upsert: true }
-                    );
+                    await conn.sendMessage(anu.id, { 
+                        text: welcomeMsg,
+                        mentions: [num] 
+                    });
                     
                 } else if (anu.action == 'remove') {
-                    // GOODBYE MESSAGE WITHOUT QR CODE
-                    const goodbyeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ꜱᴏᴜʟ ʟᴇꜰᴛ")}\n╰── • 🥀 • ──╯\n\n📛 *Group:* ${metadata.subject}\n👥 *Remaining:* ${metadata.participants.length}\n\n😔 @${num.split('@')[0]} has left the group.\n\n💬 *Farewell Quote:*\n"${fancy(quote)}"`;
-                    
+                    const goodbyeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ꜱᴏᴜʟ ʟᴇꜰᴛ")}\n╰── • 🥀 • ──╯\n\n│ ◦ @${num.split('@')[0]} ʜᴀꜱ ᴇxɪᴛᴇᴅ.\n🥀 "${fancy(quote)}"`;
                     await conn.sendMessage(anu.id, { 
                         text: goodbyeMsg,
                         mentions: [num] 
@@ -423,158 +382,8 @@ async function startInsidious(sessionId = "default") {
     return conn;
 }
 
-// QR CODE API
-app.get('/api/qr', (req, res) => {
-    if (globalConnections.size > 0) {
-        const connections = Array.from(globalConnections.values()).map(c => ({
-            status: 'connected',
-            sessionId: c.session.sessionId,
-            user: c.conn.user?.id
-        }));
-        return res.json({ 
-            status: 'connected',
-            connections
-        });
-    }
-    
-    if (qrCodeData) {
-        res.json({ 
-            qr: qrCodeData.qr,
-            sessionId: qrCodeData.sessionId,
-            status: 'waiting'
-        });
-    } else {
-        res.json({ 
-            qr: null, 
-            status: 'no_qr' 
-        });
-    }
-});
-
-// PAIRING ENDPOINT - Updated to save session properly
-app.get('/pair', async (req, res) => {
-    let num = req.query.num;
-    if (!num) return res.json({ error: "Provide a number!" });
-    
-    try {
-        // Use first connection for pairing
-        const connEntry = globalConnections.values().next().value;
-        if (!connEntry?.conn) {
-            return res.json({ error: "No active connection available" });
-        }
-        
-        const conn = connEntry.conn;
-        const cleanNum = num.replace(/[^0-9]/g, '');
-        
-        // Generate pairing code
-        const code = await conn.requestPairingCode(cleanNum);
-        
-        // Create session entry
-        const sessionId = `session_${Date.now()}`;
-        await Session.create({
-            sessionId,
-            jid: cleanNum + '@s.whatsapp.net',
-            isActive: false,
-            pairedAt: new Date(),
-            pairingCode: code,
-            deviceInfo: {
-                platform: "WhatsApp Mobile",
-                pairedNumber: cleanNum
-            }
-        });
-        
-        res.json({ 
-            success: true, 
-            code: code,
-            sessionId: sessionId,
-            message: "Scan code in WhatsApp Linked Devices"
-        });
-        
-    } catch (err) {
-        console.error("Pairing error:", err);
-        res.json({ 
-            error: "Pairing failed. Try again.",
-            details: err.message 
-        });
-    }
-});
-
-// SESSION MANAGEMENT ENDPOINTS
-app.get('/api/sessions', async (req, res) => {
-    try {
-        const sessions = await Session.find().sort({ lastConnected: -1 });
-        res.json({ sessions });
-    } catch (error) {
-        res.json({ error: error.message });
-    }
-});
-
-app.post('/api/sessions/:sessionId/restart', async (req, res) => {
-    try {
-        const { sessionId } = req.params;
-        const session = await Session.findById(sessionId);
-        
-        if (!session) {
-            return res.json({ error: "Session not found" });
-        }
-        
-        // Start the session
-        await startInsidious(session.sessionId);
-        
-        res.json({ success: true, message: "Session restart initiated" });
-    } catch (error) {
-        res.json({ error: error.message });
-    }
-});
-
-app.delete('/api/sessions/:sessionId', async (req, res) => {
-    try {
-        const { sessionId } = req.params;
-        
-        // Remove from active connections
-        if (globalConnections.has(sessionId)) {
-            const conn = globalConnections.get(sessionId).conn;
-            await conn.logout();
-            globalConnections.delete(sessionId);
-        }
-        
-        // Delete session from database
-        await Session.findOneAndDelete({ sessionId });
-        
-        // Delete session files
-        try {
-            await fs.rm(`./sessions/${sessionId}`, { recursive: true, force: true });
-        } catch (e) {}
-        
-        res.json({ success: true, message: "Session deleted" });
-    } catch (error) {
-        res.json({ error: error.message });
-    }
-});
-
-// Start the main bot and load all sessions
-async function initializeBot() {
-    try {
-        // Start default session
-        await startInsidious("default");
-        
-        // Load all saved sessions from database
-        setTimeout(() => {
-            loadAllSessions();
-        }, 3000);
-        
-    } catch (error) {
-        console.error("Bot initialization error:", error);
-    }
-}
+// Start the bot
+startInsidious().catch(console.error);
 
 // Start web server
-app.listen(PORT, () => {
-    console.log(`🌐 Dashboard running on port ${PORT}`);
-    console.log(fancy(`🚀 Auto-connecting all sessions from database...`));
-    
-    // Initialize bot
-    initializeBot().catch(console.error);
-});
-
-module.exports = { startInsidious, globalConnections };
+app.listen(PORT, () => console.log(`🌐 Dashboard running on port ${PORT}`));
