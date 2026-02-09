@@ -18,7 +18,6 @@ let botOwnerJid = null;
 function getBotOwner(conn) {
     try {
         if (conn.user && conn.user.id) {
-            // Extract owner number from connection
             const ownerNumber = conn.user.id.split(':')[0].split('@')[0];
             return ownerNumber;
         }
@@ -58,21 +57,17 @@ function clearCommandCache() {
 }
 
 // ============================================
-// CREATE REPLY FUNCTION (FIXED VERSION)
+// CREATE REPLY FUNCTION
 // ============================================
 function createReplyFunction(conn, from, msg) {
     return async function(text, options = {}) {
         try {
-            // Handle text if it's not string
             const messageText = typeof text === 'string' ? fancy(text) : text;
-            
-            // Create message options
             const messageOptions = {
                 text: messageText,
                 ...options
             };
             
-            // Send message with quote if msg exists
             if (msg && msg.key) {
                 return await conn.sendMessage(from, messageOptions, { quoted: msg });
             } else {
@@ -86,7 +81,18 @@ function createReplyFunction(conn, from, msg) {
 }
 
 // ============================================
-// LOAD COMMAND FUNCTION (COMPLETELY FIXED)
+// CREATE MSG WITH REPLY (FOR OLD FORMAT COMMANDS)
+// ============================================
+function createMsgWithReply(conn, from, originalMsg) {
+    const replyFn = createReplyFunction(conn, from, originalMsg);
+    return {
+        ...originalMsg,
+        reply: replyFn
+    };
+}
+
+// ============================================
+// LOAD COMMAND FUNCTION (FIXED FOR BOTH FORMATS)
 // ============================================
 async function loadCommand(command, conn, from, msg, args, settings, isOwner, sender, pushname) {
     try {
@@ -122,7 +128,10 @@ async function loadCommand(command, conn, from, msg, args, settings, isOwner, se
                     // Create reply function
                     const reply = createReplyFunction(conn, from, msg);
                     
-                    // Create context object with all necessary parameters
+                    // Create msg with reply for old format
+                    const msgWithReply = createMsgWithReply(conn, from, msg);
+                    
+                    // Create context object for new format
                     const context = {
                         from: from,
                         sender: sender,
@@ -133,18 +142,31 @@ async function loadCommand(command, conn, from, msg, args, settings, isOwner, se
                         config: config,
                         settings: settings,
                         conn: conn,
-                        msg: msg,
+                        msg: msgWithReply, // Use msg with reply
                         args: args,
-                        reply: reply,
-                        // Backward compatibility - ensure msg has reply
-                        message: {
-                            ...msg,
-                            reply: reply
-                        }
+                        reply: reply
                     };
 
-                    // Execute command based on module structure
-                    if (typeof cmdModule.execute === 'function') {
+                    // Check command structure and execute accordingly
+                    // OLD FORMAT: execute(conn, msg, args, { from, fancy, etc })
+                    if (cmdModule.execute && cmdModule.execute.length >= 4) {
+                        // Old format - pass destructuring object as 4th parameter
+                        const extraParams = {
+                            from: from,
+                            sender: sender,
+                            isGroup: from.endsWith('@g.us'),
+                            isOwner: isOwner,
+                            pushname: pushname || 'User',
+                            fancy: fancy,
+                            config: config,
+                            settings: settings,
+                            reply: reply
+                        };
+                        
+                        await cmdModule.execute(conn, msgWithReply, args, extraParams);
+                    }
+                    // NEW FORMAT: execute(context) or module(context)
+                    else if (typeof cmdModule.execute === 'function') {
                         await cmdModule.execute(context);
                     } else if (typeof cmdModule === 'function') {
                         await cmdModule(context);
@@ -398,7 +420,7 @@ async function loadSettings() {
 }
 
 // ============================================
-// SETTINGS COMMAND HANDLER (FIXED)
+// SETTINGS COMMAND HANDLER
 // ============================================
 async function handleSettingsCommand(conn, from, msg, args, settings, isOwner, sender, pushname) {
     if (!isOwner) {
@@ -462,7 +484,6 @@ async function handleSettingsCommand(conn, from, msg, args, settings, isOwner, s
             return;
         }
         
-        // Map feature names to database fields
         const featureMap = {
             'autoreact': 'autoReact',
             'autoread': 'autoRead',
@@ -474,7 +495,6 @@ async function handleSettingsCommand(conn, from, msg, args, settings, isOwner, s
         
         const dbFeature = featureMap[feature] || feature;
         
-        // Update setting
         settings[dbFeature] = value;
         await settings.save();
         
@@ -554,7 +574,7 @@ async function handleSettingsCommand(conn, from, msg, args, settings, isOwner, s
 }
 
 // ============================================
-// MAIN HANDLER - COMPLETELY FIXED
+// MAIN HANDLER
 // ============================================
 module.exports = async (conn, m) => {
     try {
@@ -579,7 +599,7 @@ module.exports = async (conn, m) => {
         const args = body ? body.trim().split(/ +/).slice(1) : [];
 
         // ============================================
-        // SET BOT OWNER (AUTOMATIC)
+        // SET BOT OWNER
         // ============================================
         if (!botOwnerJid && conn.user) {
             const ownerNumber = getBotOwner(conn);
