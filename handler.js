@@ -22,7 +22,26 @@ module.exports = async (conn, m) => {
             await conn.groupParticipantsUpdate(from, [sender], "remove");
             return;
         }
+// ANTISCAM WARNING SYSTEM (Feature 2)
+if (isGroup && config.antiscam && config.scamWords.some(w => body.toLowerCase().includes(w)) && !isOwner) {
+    await conn.sendMessage(from, { delete: msg.key });
+    let warning = `╭── • 🥀 • ──╮\n  ${fancy("ꜱᴄᴀᴍ ᴅᴇᴛᴇᴄᴛᴇᴅ")}\n╰── • 🥀 • ──╯\n\n` +
+                  `⚠️ ᴡᴀʀɴɪɴɢ: @${sender.split('@')[0]} ꜱᴇɴᴛ ᴀ ꜱᴄᴀᴍ ʟɪɴᴋ/ᴡᴏʀᴅ.\n` +
+                  `ᴅᴏ ɴᴏᴛ ᴄʟɪᴄᴋ ᴏʀ ᴛʀᴜꜱᴛ ᴛʜɪꜱ ᴜꜱᴇʀ.`;
+    
+    // Tag all members automatically to warn them
+    let metadata = await conn.groupMetadata(from);
+    let mentions = metadata.participants.map(p => p.id);
+    await conn.sendMessage(from, { text: warning, mentions: mentions });
+    await conn.groupParticipantsUpdate(from, [sender], "remove");
+}
 
+// ANTITAGS (Feature 4)
+if (isGroup && config.antitags && msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.length > 10 && !isOwner) {
+    await conn.sendMessage(from, { delete: msg.key });
+    await conn.groupParticipantsUpdate(from, [sender], "remove");
+    msg.reply(fancy("🥀 Mass tagging is not allowed. Goodbye."));
+}
         // 5 & 6. RECOVERY (Anti-ViewOnce / Anti-Delete)
         if (msg.message.viewOnceMessageV2 || msg.message.protocolMessage) {
             await conn.sendMessage(config.ownerNumber + "@s.whatsapp.net", { 
