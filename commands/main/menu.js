@@ -24,14 +24,19 @@ module.exports = {
             menu += `│ ◦ ${fancy("ᴍᴏᴅᴇ")}: ${config.workMode.toUpperCase()}\n`;
             menu += `│ ◦ ${fancy("ᴄᴍᴅꜱ")}: ${totalCmds}\n\n`;
 
-            // 3. Loop ya Categories
+            // 3. Loop ya Categories - COMMANDS WIMA
             categories.forEach(cat => {
                 const files = fs.readdirSync(path.join(cmdPath, cat))
                     .filter(f => f.endsWith('.js'))
                     .map(f => f.replace('.js', ''));
                 
                 menu += `🥀 *${fancy(cat.toUpperCase())}*\n`;
-                menu += `│ ◦ ${files.join(', ')}\n\n`;
+                
+                // COMMANDS WIMA - Kila command kwa line yake
+                files.forEach(file => {
+                    menu += `│ ◦ ${file}\n`;
+                });
+                menu += `\n`;
             });
 
             menu += `└──────────────\n${fancy(config.footer)}`;
