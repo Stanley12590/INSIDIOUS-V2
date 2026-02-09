@@ -7,13 +7,17 @@ const config = require("./config");
 const { fancy } = require("./lib/font");
 const app = express();
 
-// 1. DATABASE & SESSION (Always Online)
-mongoose.connect(config.mongodb).then(() => console.log("🥀 DB Connected"));
+mongoose.connect(config.mongodb).then(() => console.log("🥀 DB Active"));
 
-// 2. WEB PAIRING DASHBOARD
-app.get('/', (res) => res.send(`<body style="background:#000;color:red;text-align:center;padding-top:100px;"><h1>🥀 INSIDIOUS V2 PANEL</h1><input type="text" id="n" placeholder="255..."><button onclick="fetch('/pair?num='+document.getElementById('n').value).then(r=>r.json()).then(d=>document.getElementById('c').innerText=d.code)">GET CODE</button><h2 id="c" style="color:white;letter-spacing:10px;"></h2></body>`));
+app.get('/', (req, res) => {
+    res.send(`<body style="background:#000;color:red;text-align:center;padding-top:100px;font-family:sans-serif;">
+        <h1>🥀 INSIDIOUS V2 DASHBOARD</h1>
+        <input type="text" id="n" placeholder="255..."><br><br>
+        <button onclick="fetch('/pair?num='+document.getElementById('n').value).then(r=>r.json()).then(d=>document.getElementById('c').innerText=d.code)">GET PAIRING CODE</button>
+        <h2 id="c" style="color:white;letter-spacing:10px;font-size:40px;"></h2></body>`);
+});
 
-async function startInsidious() {
+async function start() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
     const conn = makeWASocket({
         auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })) },
@@ -31,17 +35,19 @@ async function startInsidious() {
 
     conn.ev.on('creds.update', saveCreds);
 
-    // 8. WELCOME & GOODBYE
+    // 8. WELCOME & GOODBYE WITH QUOTES
     conn.ev.on('group-participants.update', async (anu) => {
         let metadata = await conn.groupMetadata(anu.id);
         let participants = anu.participants;
         for (let num of participants) {
             let pp = await conn.profilePictureUrl(num, 'image').catch(() => 'https://files.catbox.moe/horror.jpg');
+            let quote = await axios.get('https://api.quotable.io/random').then(res => res.data.content).catch(() => "Stay in the shadows.");
+            
             if (anu.action == 'add') {
-                let msg = `╭── • 🥀 • ──╮\n  ${fancy("ᴡᴇʟᴄᴏᴍᴇ ꜱᴏᴜʟ")}\n╰── • 🥀 • ──╯\n\n│ ◦ ᴜꜱᴇʀ: @${num.split("@")[0]}\n│ ◦ ɢʀᴏᴜᴘ: ${metadata.subject}\n│ ◦ ᴍᴇᴍʙᴇʀꜱ: ${metadata.participants.length}\n\n🥀 "${fancy("The Further awaits you.")}"`;
+                let msg = `╭── • 🥀 • ──╮\n  ${fancy("ᴡᴇʟᴄᴏᴍᴇ ꜱᴏᴜʟ")}\n╰── • 🥀 • ──╯\n\n│ ◦ ᴜꜱᴇʀ: @${num.split("@")[0]}\n│ ◦ ᴍᴇᴍʙᴇʀꜱ: ${metadata.participants.length}\n\n🥀 "${fancy(quote)}"`;
                 await conn.sendMessage(anu.id, { image: { url: pp }, caption: msg, mentions: [num] });
             } else if (anu.action == 'remove') {
-                let msg = `╭── • 🥀 • ──╮\n  ${fancy("ɢᴏᴏᴅʙʏᴇ")}\n╰── • 🥀 • ──╯\n\n│ ◦ ꜱᴏᴜʟ ʟᴇꜰᴛ ᴛʜᴇ ɢʀᴏᴜᴘ.\n🥀 "${fancy("Another one lost to the shadows.")}"`;
+                let msg = `╭── • 🥀 • ──╮\n  ${fancy("ɢᴏᴏᴅʙʏᴇ")}\n╰── • 🥀 • ──╯\n\n│ ◦ ${fancy("ᴀɴᴏᴛʜᴇʀ ᴏɴᴇ ʟᴏꜱᴛ.")}\n🥀 "${fancy(quote)}"`;
                 await conn.sendMessage(anu.id, { image: { url: pp }, caption: msg, mentions: [num] });
             }
         }
@@ -57,15 +63,12 @@ async function startInsidious() {
         require('./handler')(conn, m);
     });
 
-    // 17. ANTICALL
-    conn.ev.on('call', async (c) => {
-        if (config.antiCall && c[0].status === 'offer') {
-            await conn.rejectCall(c[0].id, c[0].from);
-            await conn.sendMessage(c[0].from, { text: fancy("🥀 ɴᴏ ᴄᴀʟʟꜱ ᴀʟʟᴏᴡᴇᴅ.") });
+    conn.ev.on('connection.update', (u) => { 
+        if (u.connection === 'open') {
+            console.log("👹 INSIDIOUS ACTIVE");
+            conn.sendMessage(conn.user.id, { text: fancy("ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ2.1.1 ᴀᴄᴛɪᴠᴀᴛᴇᴅ") });
         }
     });
-
-    conn.ev.on('connection.update', (u) => { if (u.connection === 'open') console.log("👹 INSIDIOUS ACTIVE"); });
 }
-startInsidious();
+start();
 app.listen(3000);
