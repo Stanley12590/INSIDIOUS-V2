@@ -124,6 +124,7 @@ app.post('/api/settings', async (req, res) => {
 
 let globalConn = null;
 let connectionStatus = 'disconnected';
+let isConnectionReady = false;
 
 async function startInsidious() {
     const { state, saveCreds } = await useMultiFileAuthState(config.sessionName);
@@ -145,11 +146,12 @@ async function startInsidious() {
 
     // HANDLE CONNECTION WITHOUT QR CODE
     conn.ev.on('connection.update', async (update) => {
-        const { connection } = update;
+        const { connection, lastDisconnect } = update;
         
         if (connection === 'open') {
             console.log(fancy("👹 insidious is alive and connected."));
             connectionStatus = 'connected';
+            isConnectionReady = true;
             
             try {
                 // Initialize settings if not exist
@@ -172,11 +174,18 @@ async function startInsidious() {
         }
         
         if (connection === 'close') {
-            const shouldReconnect = update.lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log(fancy(`🔌 Connection closed. Reason: ${lastDisconnect?.error?.output?.statusCode || 'unknown'}`));
+            
+            isConnectionReady = false;
+            connectionStatus = 'disconnected';
+            
             if (shouldReconnect) {
-                console.log(fancy("🔄 Reconnecting..."));
+                console.log(fancy("🔄 Reconnecting in 5 seconds..."));
                 connectionStatus = 'reconnecting';
                 setTimeout(startInsidious, 5000);
+            } else {
+                console.log(fancy("❌ Logged out. Please restart bot."));
             }
         }
         
@@ -188,29 +197,71 @@ async function startInsidious() {
 
     // CONNECTION STATUS API
     app.get('/api/status', (req, res) => {
-        if (globalConn?.user) {
+        if (globalConn?.user && isConnectionReady) {
             return res.json({ 
                 status: 'connected', 
-                user: globalConn.user.id 
+                user: globalConn.user.id,
+                ready: true
             });
         }
         
         res.json({ 
             status: connectionStatus,
-            message: 'Use /pair?num=255xxxxxxxx to get pairing code'
+            ready: isConnectionReady,
+            message: 'Bot is connecting...'
         });
     });
 
-    // PAIRING ENDPOINT - 8 DIGIT CODE ONLY
+    // PAIRING ENDPOINT - IMPROVED WITH ERROR HANDLING
     app.get('/pair', async (req, res) => {
-        let num = req.query.num;
-        if (!num) return res.json({ error: "Provide a number!" });
-        
         try {
+            let num = req.query.num;
+            if (!num) return res.json({ error: "Provide a number! Example: /pair?num=255123456789" });
+            
+            // Check if connection is ready
+            if (!globalConn || !isConnectionReady) {
+                return res.json({ 
+                    error: "Bot is not ready yet",
+                    status: connectionStatus,
+                    message: "Wait for bot to connect first"
+                });
+            }
+            
             const cleanNum = num.replace(/[^0-9]/g, '');
             
-            // Generate 8-digit pairing code
-            const code = await conn.requestPairingCode(cleanNum);
+            // Validate number format
+            if (!cleanNum || cleanNum.length < 9) {
+                return res.json({ 
+                    error: "Invalid number format",
+                    example: "255123456789 (without + or spaces)"
+                });
+            }
+            
+            console.log(fancy(`🔐 Requesting pairing code for: ${cleanNum}`));
+            
+            // Generate 8-digit pairing code with retry
+            let code;
+            let retries = 3;
+            
+            while (retries > 0) {
+                try {
+                    code = await globalConn.requestPairingCode(cleanNum);
+                    if (code) break;
+                } catch (pairError) {
+                    console.warn(`Pairing attempt ${4 - retries} failed:`, pairError.message);
+                    retries--;
+                    if (retries > 0) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
+            }
+            
+            if (!code) {
+                return res.json({ 
+                    error: "Failed to generate pairing code",
+                    message: "Please try again or check if number is valid"
+                });
+            }
             
             // Ensure code is 8 digits
             const formattedCode = code.toString().padStart(8, '0').slice(0, 8);
@@ -230,22 +281,58 @@ async function startInsidious() {
                 { upsert: true, new: true }
             );
             
-            console.log(fancy(`🔐 Pairing code generated for ${cleanNum}: ${formattedCode}`));
+            console.log(fancy(`✅ Pairing code generated: ${formattedCode} for ${cleanNum}`));
             
             res.json({ 
                 success: true, 
                 code: formattedCode,
-                message: `Use this 8-digit code in WhatsApp: ${formattedCode}`,
-                instructions: "Open WhatsApp > Settings > Linked Devices > Link a Device > Enter Code"
+                message: `8-digit pairing code: ${formattedCode}`,
+                instructions: [
+                    "1. Open WhatsApp on your phone",
+                    "2. Go to Settings → Linked Devices → Link a Device",
+                    "3. Enter this code: " + formattedCode,
+                    "4. Wait for connection confirmation"
+                ],
+                note: "Code expires in 60 seconds"
             });
             
         } catch (err) {
-            console.error("Pairing error:", err);
+            console.error("🔴 Pairing error details:", err);
+            
+            // Handle specific errors
+            if (err.message.includes('Precondition Required') || err.message.includes('428')) {
+                return res.json({ 
+                    error: "Connection not ready",
+                    details: "Bot needs to fully connect first. Wait a few seconds and try again.",
+                    fix: "Check /api/status to see if bot is connected"
+                });
+            }
+            
+            if (err.message.includes('timeout') || err.message.includes('socket')) {
+                return res.json({ 
+                    error: "Connection timeout",
+                    details: "WhatsApp servers are not responding",
+                    fix: "Check your internet connection and try again"
+                });
+            }
+            
             res.json({ 
-                error: "Pairing failed. Make sure bot is connected.",
-                details: err.message 
+                error: "Pairing failed",
+                details: err.message,
+                fix: "Make sure the number is valid and bot is connected"
             });
         }
+    });
+
+    // TEST ENDPOINT - Check if bot is ready
+    app.get('/api/ready', (req, res) => {
+        const ready = globalConn && isConnectionReady;
+        res.json({
+            ready: ready,
+            connection: connectionStatus,
+            user: globalConn?.user?.id,
+            timestamp: new Date().toISOString()
+        });
     });
 
     conn.ev.on('creds.update', saveCreds);
@@ -259,7 +346,7 @@ async function startInsidious() {
         require('./handler')(conn, m);
     });
 
-    // GROUP PARTICIPANTS UPDATE - IMPROVED WELCOME
+    // GROUP PARTICIPANTS UPDATE
     conn.ev.on('group-participants.update', async (anu) => {
         try {
             const settings = await Settings.findOne();
@@ -292,7 +379,7 @@ async function startInsidious() {
             for (let num of participants) {
                 if (anu.action == 'add') {
                     // BETTER WELCOME MESSAGE WITHOUT LINKS
-                    const welcomeMsg = `▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃\n   ✨ *𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐍𝐄𝐖 𝐌𝐄𝐌𝐁𝐄𝐑* ✨\n▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃\n\n👋 *Hello* @${num.split("@")[0]}!\n\n📛 *Group:* ${metadata.subject}\n👥 *Total Members:* ${metadata.participants.length}\n📝 *About:* ${groupDesc}\n\n🎯 *Rules:*\n• Respect all members\n• No spam or advertisements\n• Follow group guidelines\n\n💫 *Enjoy your stay!*`;
+                    const welcomeMsg = `▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃\n   ✨ *𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐍𝐄𝐖 𝐌𝐄𝐌𝐁𝐄𝐑* ✨\n▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃\n\n👋 *Hello* @${num.split("@")[0]}!\n\n📛 *Group:* ${metadata.subject}\n👥 *Total Members:* ${metadata.participants.length}\n📝 *About:* ${groupDesc}\n\n🎯 *Rules:*\n• Respect all members\n• No spam or advertisements\n• Follow group guidelines\n\n💫 *Enjoy your stay!*`;
                     
                     // Send with group picture if available
                     if (groupPicture) {
@@ -384,7 +471,7 @@ async function startInsidious() {
     if (config.autoBio) {
         console.log(fancy("🔄 Auto Bio feature activated"));
         
-        setInterval(async () => {
+        const updateBio = async () => {
             try {
                 const settings = await Settings.findOne();
                 if (!settings?.autoBio) {
@@ -406,29 +493,15 @@ async function startInsidious() {
                 console.log(fancy(`📝 Bio updated: ${bioText}`));
                 
             } catch (error) {
-                console.error("❌ Auto bio error:", error);
+                console.error("❌ Auto bio error:", error.message);
             }
-        }, 60000); // Update every 60 seconds
+        };
         
-        // Run immediately on start
-        setTimeout(async () => {
-            try {
-                const settings = await Settings.findOne();
-                if (!settings?.autoBio) return;
-                
-                const uptime = process.uptime();
-                const days = Math.floor(uptime / 86400);
-                const hours = Math.floor((uptime % 86400) / 3600);
-                const minutes = Math.floor((uptime % 3600) / 60);
-                
-                const bioText = `🤖 ${config.botName || "Insidious"} | ⚡ ${days}d ${hours}h ${minutes}m | 👑 ${config.ownerName || "Owner"}`;
-                
-                await conn.updateProfileStatus(bioText);
-                console.log(fancy(`📝 Initial bio set: ${bioText}`));
-            } catch (error) {
-                console.error("❌ Initial auto bio error:", error);
-            }
-        }, 10000);
+        // Run every 60 seconds
+        setInterval(updateBio, 60000);
+        
+        // Run first time after 10 seconds
+        setTimeout(updateBio, 10000);
     }
 
     return conn;
@@ -441,7 +514,8 @@ startInsidious().catch(console.error);
 app.listen(PORT, () => {
     console.log(`🌐 Dashboard running on port ${PORT}`);
     console.log(fancy("🔐 Bot using 8-digit pairing code only"));
-    console.log(fancy(`📞 Use: http://localhost:${PORT}/pair?num=255xxxxxxxx`));
+    console.log(fancy("⏳ Waiting for WhatsApp connection..."));
+    console.log(fancy(`📞 Use: http://localhost:${PORT}/pair?num=255xxxxxxxx (after connection)`));
 });
 
 module.exports = { startInsidious, globalConn };
