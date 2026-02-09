@@ -5,13 +5,14 @@ const {
     Browsers,
     makeCacheableSignalKeyStore,
     fetchLatestBaileysVersion,
-    delay
+    downloadContentFromMessage
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const express = require("express");
 const mongoose = require("mongoose");
 const path = require("path");
 const fs = require("fs-extra");
+const { pipeline } = require("stream");
 const { fancy } = require("./lib/font");
 const config = require("./config");
 const { User, Group, ChannelSubscriber, Settings } = require('./database/models');
@@ -71,14 +72,105 @@ function sessionExists() {
 }
 
 // ============================================
-// AUTO-RESTORE ALL SESSIONS FUNCTION
+// DOWNLOAD GROUP IMAGE
+// ============================================
+async function downloadGroupImage(conn, groupId) {
+    try {
+        const groupMetadata = await conn.groupMetadata(groupId);
+        
+        if (groupMetadata.picture) {
+            const stream = await downloadContentFromMessage(
+                groupMetadata.picture, 
+                'image'
+            );
+            
+            let buffer = Buffer.from([]);
+            for await (const chunk of stream) {
+                buffer = Buffer.concat([buffer, chunk]);
+            }
+            
+            return buffer;
+        }
+    } catch (error) {
+        console.error('Failed to download group image:', error.message);
+    }
+    return null;
+}
+
+// ============================================
+// GET GROUP WELCOME MESSAGE WITH IMAGE
+// ============================================
+async function getGroupWelcomeMessage(conn, groupId, participant) {
+    try {
+        const metadata = await conn.groupMetadata(groupId);
+        const groupName = metadata.subject || "Unknown Group";
+        const groupDesc = metadata.desc || "No description available";
+        const memberCount = metadata.participants.length;
+        const participantNumber = participant.split('@')[0];
+        
+        let imageBuffer = null;
+        try {
+            imageBuffer = await downloadGroupImage(conn, groupId);
+        } catch (error) {
+            console.error('Error downloading group image:', error.message);
+        }
+        
+        // Truncate description if too long
+        const shortDesc = groupDesc.length > 150 
+            ? groupDesc.substring(0, 150) + '...' 
+            : groupDesc;
+        
+        const welcomeText = `╭─── • 🎉 • ───╮\n   ᴡᴇʟᴄᴏᴍᴇ 🎊\n╰─── • 🎉 • ───╯\n\n👤 *New Member:* @${participantNumber}\n🏷️ *Group:* ${groupName}\n📝 *Description:* ${shortDesc}\n👥 *Members:* ${memberCount}\n\n💬 *Rules:*\n• Be respectful to everyone\n• No spam or advertising\n• Follow group guidelines\n\nEnjoy your stay! 🎯`;
+        
+        return {
+            text: fancy(welcomeText),
+            image: imageBuffer,
+            mentions: [participant]
+        };
+    } catch (error) {
+        console.error('Error generating welcome message:', error);
+        return {
+            text: fancy(`Welcome @${participant.split('@')[0]} to the group! 🎉`),
+            image: null,
+            mentions: [participant]
+        };
+    }
+}
+
+// ============================================
+// GET GROUP GOODBYE MESSAGE
+// ============================================
+async function getGroupGoodbyeMessage(conn, groupId, participant) {
+    try {
+        const metadata = await conn.groupMetadata(groupId);
+        const groupName = metadata.subject || "Unknown Group";
+        const participantNumber = participant.split('@')[0];
+        
+        const goodbyeText = `╭─── • 👋 • ───╮\n   ɢᴏᴏᴅʙʏᴇ 👋\n╰─── • 👋 • ───╯\n\n👤 *Member Left:* @${participantNumber}\n🏷️ *Group:* ${groupName}\n\nWe'll miss you! 😢\nHope to see you again soon.`;
+        
+        return {
+            text: fancy(goodbyeText),
+            mentions: [participant]
+        };
+    } catch (error) {
+        console.error('Error generating goodbye message:', error);
+        return {
+            text: fancy(`Goodbye @${participant.split('@')[0]}! 👋`),
+            mentions: [participant]
+        };
+    }
+}
+
+// ============================================
+// AUTO-RESTORE SESSIONS FUNCTION
 // ============================================
 async function autoRestoreSessions() {
     try {
         console.log(fancy('[SESSION] 🔄 Checking for saved sessions...'));
         
         if (!sessionExists()) {
-            console.log(fancy('[SESSION] ❌ No saved session found. First time setup needed.'));
+            console.log(fancy('[SESSION] ❌ No saved session found.'));
+            console.log(fancy('[SESSION] ⚠️ Manual pairing required for first time.'));
             return false;
         }
         
@@ -91,7 +183,7 @@ async function autoRestoreSessions() {
 }
 
 // ============================================
-// MAIN BOT START FUNCTION (AUTO-RESTORE)
+// MAIN BOT START FUNCTION (AUTO-CONNECT)
 // ============================================
 async function startInsidious() {
     try {
@@ -102,9 +194,9 @@ async function startInsidious() {
         
         if (!hasSession) {
             console.log(fancy('[SESSION] ⚠️ First time setup required.'));
-            console.log(fancy('[SESSION] 📱 Please link a device manually once.'));
-            console.log(fancy('[SESSION] 🔗 Use: !pair 2557xxxxxx (in bot DM)'));
-            console.log(fancy('[SESSION] 💾 Session will auto-save for future restarts.'));
+            console.log(fancy('[SESSION] 📱 Please link device manually using:'));
+            console.log(fancy('[SESSION] 🔗 Use command: !pair 2557xxxxxx'));
+            console.log(fancy('[SESSION] 💾 Session will auto-save for future.'));
         }
         
         // Use saved auth state or create new
@@ -122,9 +214,11 @@ async function startInsidious() {
             browser: Browsers.macOS("Safari"),
             syncFullHistory: false,
             getMessage: async (key) => ({ conversation: "message deleted" }),
-            printQRInTerminal: false, // No QR code
+            printQRInTerminal: false, // NO QR CODE
             generateHighQualityLinkPreview: true,
-            markOnlineOnConnect: true
+            markOnlineOnConnect: true,
+            retryRequestDelayMs: 1000,
+            connectTimeoutMs: 60000
         });
 
         globalConn = conn;
@@ -139,17 +233,18 @@ async function startInsidious() {
                 isConnected = true;
                 console.log(fancy("✅ Bot connected successfully!"));
                 console.log(fancy(`👤 User ID: ${conn.user?.id}`));
-                console.log(fancy(`📱 Phone: ${conn.user?.phone}`));
+                console.log(fancy(`📱 Phone: ${conn.user?.phone || 'Unknown'}`));
                 
                 try {
-                    // Initialize settings if not exist
+                    // Initialize settings
                     let settings = await Settings.findOne();
                     if (!settings) {
                         settings = new Settings();
                         await settings.save();
+                        console.log(fancy('[SETTINGS] ✅ Default settings created'));
                     }
                     
-                    // Initialize handler if exists
+                    // Initialize handler
                     if (typeof require('./handler').init === 'function') {
                         setTimeout(async () => {
                             try {
@@ -157,7 +252,7 @@ async function startInsidious() {
                             } catch (error) {
                                 console.error("Handler init error:", error);
                             }
-                        }, 5000);
+                        }, 3000);
                     }
                     
                 } catch (error) {
@@ -182,7 +277,7 @@ async function startInsidious() {
                         console.log(fancy("[SESSION] 🗑️ Deleted old session folder"));
                     }
                     
-                    // Wait 5 seconds and restart
+                    // Wait and restart
                     console.log(fancy("🔄 Restarting in 5 seconds..."));
                     setTimeout(startInsidious, 5000);
                     
@@ -215,35 +310,43 @@ async function startInsidious() {
         });
 
         // ============================================
-        // GROUP PARTICIPANTS UPDATE
+        // GROUP PARTICIPANTS UPDATE (ENHANCED)
         // ============================================
         conn.ev.on('group-participants.update', async (anu) => {
             try {
                 const settings = await Settings.findOne();
                 if (!settings?.welcomeGoodbye) return;
                 
-                const metadata = await conn.groupMetadata(anu.id);
-                const participants = anu.participants;
-                
-                for (let num of participants) {
-                    if (anu.action == 'add') {
-                        const welcomeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ɴᴇᴡ ꜱᴏᴜʟ ᴅᴇᴛᴇᴄᴛᴇᴅ")}\n╰── • 🥀 • ──╯\n\n│ ◦ Welcome @${num.split("@")[0]}\n│ ◦ Group: ${metadata.subject}\n\n${fancy(config.footer)}`;
+                for (let participant of anu.participants) {
+                    if (anu.action === 'add') {
+                        const welcomeData = await getGroupWelcomeMessage(conn, anu.id, participant);
                         
-                        await conn.sendMessage(anu.id, { 
-                            text: welcomeMsg,
-                            mentions: [num] 
-                        });
+                        if (welcomeData.image) {
+                            // Send with image
+                            await conn.sendMessage(anu.id, {
+                                image: welcomeData.image,
+                                caption: welcomeData.text,
+                                mentions: welcomeData.mentions
+                            });
+                        } else {
+                            // Send text only
+                            await conn.sendMessage(anu.id, {
+                                text: welcomeData.text,
+                                mentions: welcomeData.mentions
+                            });
+                        }
                         
-                    } else if (anu.action == 'remove') {
-                        const goodbyeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ꜱᴏᴜʟ ʟᴇꜰᴛ")}\n╰── • 🥀 • ──╯\n\n│ ◦ @${num.split('@')[0]} ʜᴀꜱ ᴇxɪᴛᴇᴅ.`;
-                        await conn.sendMessage(anu.id, { 
-                            text: goodbyeMsg,
-                            mentions: [num] 
+                    } else if (anu.action === 'remove') {
+                        const goodbyeData = await getGroupGoodbyeMessage(conn, anu.id, participant);
+                        
+                        await conn.sendMessage(anu.id, {
+                            text: goodbyeData.text,
+                            mentions: goodbyeData.mentions
                         });
                     }
                 }
-            } catch (e) { 
-                console.error("Group event error:", e);
+            } catch (error) {
+                console.error("Group event error:", error);
             }
         });
 
@@ -267,22 +370,44 @@ async function startInsidious() {
         });
 
         // ============================================
-        // SESSION HEALTH CHECK (EVERY 10 MINUTES)
+        // SESSION HEALTH CHECK
         // ============================================
         setInterval(async () => {
             if (!isConnected) {
                 console.log(fancy("[HEALTH] ⚠️ Connection lost. Reconnecting..."));
                 startInsidious();
             }
-        }, 10 * 60 * 1000);
+        }, 5 * 60 * 1000); // Every 5 minutes
+
+        // ============================================
+        // AUTO BIO UPDATER
+        // ============================================
+        if (config.autoBio) {
+            setInterval(async () => {
+                try {
+                    const settings = await Settings.findOne();
+                    if (!settings?.autoBio) return;
+                    
+                    const uptime = process.uptime();
+                    const days = Math.floor(uptime / 86400);
+                    const hours = Math.floor((uptime % 86400) / 3600);
+                    const minutes = Math.floor((uptime % 3600) / 60);
+                    
+                    const bio = `🤖 ${config.botName} | ⚡${days}d ${hours}h ${minutes}m | 👑${config.ownerName}`;
+                    await conn.updateProfileStatus(bio);
+                } catch (error) {
+                    console.error("Auto bio error:", error);
+                }
+            }, 60000);
+        }
 
         return conn;
         
     } catch (error) {
         console.error("Failed to start bot:", error);
         
-        // If it's a session error, delete and retry
-        if (error.message.includes("session") || error.message.includes("creds")) {
+        // Session error handling
+        if (error.message.includes("session") || error.message.includes("creds") || error.message.includes("auth")) {
             console.log(fancy("[SESSION] 🗑️ Corrupted session detected. Deleting..."));
             
             const sessionPath = path.join(__dirname, config.sessionName);
@@ -293,7 +418,6 @@ async function startInsidious() {
             console.log(fancy("[SESSION] 🔄 Retrying in 5 seconds..."));
             setTimeout(startInsidious, 5000);
         } else {
-            // Other errors, retry after 10 seconds
             console.log(fancy("🔄 Retrying in 10 seconds..."));
             setTimeout(startInsidious, 10000);
         }
@@ -312,29 +436,57 @@ app.get('/api/bot-status', (req, res) => {
         phone: globalConn?.user?.phone || null,
         name: globalConn?.user?.name || null,
         sessionExists: sessionExists(),
-        uptime: process.uptime()
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
     });
 });
 
-// Pairing endpoint (manual pairing for first time)
+// Pairing endpoint for first time
 app.get('/api/pair', async (req, res) => {
     try {
-        if (!globalConn || !globalConn.requestPairingCode) {
-            return res.json({ error: "Bot not connected yet" });
+        if (!globalConn) {
+            return res.json({ 
+                error: "Bot not initialized. Wait for connection..." 
+            });
         }
         
         const num = req.query.num;
         if (!num) {
-            return res.json({ error: "Phone number required!" });
+            return res.json({ error: "Phone number required! Example: ?num=255712345678" });
         }
         
         const cleanNum = num.replace(/[^0-9]/g, '');
+        
+        if (!globalConn.requestPairingCode) {
+            return res.json({ error: "Pairing not available in current state" });
+        }
+        
         const code = await globalConn.requestPairingCode(cleanNum);
+        
+        // Save user
+        await User.findOneAndUpdate(
+            { jid: cleanNum + '@s.whatsapp.net' },
+            {
+                jid: cleanNum + '@s.whatsapp.net',
+                pairingCode: code,
+                linkedAt: new Date(),
+                isActive: true,
+                lastPair: new Date()
+            },
+            { upsert: true, new: true }
+        );
         
         res.json({
             success: true,
             code: code,
-            instructions: `1. Open WhatsApp on ${cleanNum}\n2. Go to Settings → Linked Devices\n3. Tap "Link a Device"\n4. Enter code: ${code}`
+            number: cleanNum,
+            instructions: [
+                `1. Open WhatsApp on phone ${cleanNum}`,
+                `2. Go to Settings → Linked Devices`,
+                `3. Tap "Link a Device"`,
+                `4. Enter this 6-digit code: ${code}`,
+                `5. Wait for connection confirmation`
+            ].join('\n')
         });
         
     } catch (err) {
@@ -346,7 +498,7 @@ app.get('/api/pair', async (req, res) => {
     }
 });
 
-// Session management endpoint
+// Session management
 app.post('/api/session/reset', (req, res) => {
     try {
         const sessionPath = path.join(__dirname, config.sessionName);
@@ -355,11 +507,37 @@ app.post('/api/session/reset', (req, res) => {
         }
         
         console.log(fancy("[API] 🗑️ Session reset by dashboard"));
-        res.json({ success: true, message: "Session reset. Bot will restart." });
+        res.json({ 
+            success: true, 
+            message: "Session reset successfully. Bot will restart." 
+        });
         
-        // Restart bot after 2 seconds
+        // Restart bot
         setTimeout(startInsidious, 2000);
         
+    } catch (error) {
+        res.json({ error: error.message });
+    }
+});
+
+// Get all linked users
+app.get('/api/linked-users', async (req, res) => {
+    try {
+        const users = await User.find({ isActive: true })
+            .sort({ lastActive: -1 })
+            .limit(50);
+        
+        res.json({
+            success: true,
+            count: users.length,
+            users: users.map(u => ({
+                jid: u.jid,
+                name: u.name,
+                lastActive: u.lastActive,
+                messageCount: u.messageCount,
+                linkedAt: u.linkedAt
+            }))
+        });
     } catch (error) {
         res.json({ error: error.message });
     }
@@ -368,18 +546,26 @@ app.post('/api/session/reset', (req, res) => {
 // ============================================
 // START EVERYTHING
 // ============================================
+console.log(fancy('╔══════════════════════════════╗'));
+console.log(fancy('║     INSIDIOUS V2 BOT        ║'));
+console.log(fancy('║    Auto-Connect Edition     ║'));
+console.log(fancy('╚══════════════════════════════╝'));
+console.log(fancy(''));
+
 startInsidious();
 
 // Start web server
 app.listen(PORT, () => {
     console.log(fancy(`🌐 Dashboard: http://localhost:${PORT}`));
-    console.log(fancy(`📊 Status API: http://localhost:${PORT}/api/bot-status`));
-    console.log(fancy("💾 Session auto-restore: ENABLED"));
+    console.log(fancy(`📊 Status: http://localhost:${PORT}/api/bot-status`));
+    console.log(fancy(`🔗 Pairing: http://localhost:${PORT}/api/pair?num=YOUR_NUMBER`));
+    console.log(fancy('💾 Auto-restore: ENABLED'));
+    console.log(fancy('🖼️ Group welcome images: ENABLED'));
 });
 
 // Handle graceful shutdown
 process.on('SIGINT', () => {
-    console.log(fancy("👋 Shutting down bot..."));
+    console.log(fancy("👋 Shutting down gracefully..."));
     process.exit(0);
 });
 
@@ -388,5 +574,5 @@ process.on('SIGTERM', () => {
     process.exit(0);
 });
 
-// Export for testing
-module.exports = { app, startInsidious };
+// Export
+module.exports = { app, startInsidious, globalConn };
