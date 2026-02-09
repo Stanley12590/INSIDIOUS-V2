@@ -1,102 +1,130 @@
 const mongoose = require('mongoose');
 
 // User Schema
-const userSchema = new mongoose.Schema({
+const UserSchema = new mongoose.Schema({
     jid: { type: String, required: true, unique: true },
     name: String,
+    pushname: String,
     deviceId: String,
     linkedAt: { type: Date, default: Date.now },
-    isActive: { type: Boolean, default: true },
-    lastActive: Date,
+    lastActive: { type: Date, default: Date.now },
     messageCount: { type: Number, default: 0 },
     warnings: { type: Number, default: 0 },
-    spamCount: { type: Number, default: 0 },
+    isActive: { type: Boolean, default: true },
     isBlocked: { type: Boolean, default: false },
-    countryCode: String,
-    joinedGroups: [String],
     mustFollowChannel: { type: Boolean, default: true },
-    sessionData: mongoose.Schema.Types.Mixed,
+    channelNotified: { type: Boolean, default: false },
+    lastPair: Date,
+    joinedGroups: [String],
+    spamCount: { type: Number, default: 0 },
+    lastMessageTime: Number
+}, { timestamps: true });
+
+// Group Schema
+const GroupSchema = new mongoose.Schema({
+    jid: { type: String, required: true, unique: true },
+    name: String,
+    subject: String,
+    description: String,
+    created: Date,
+    owner: String,
+    participants: [{
+        jid: String,
+        isAdmin: Boolean,
+        isSuperAdmin: Boolean
+    }],
     settings: {
         antilink: { type: Boolean, default: true },
         antiporn: { type: Boolean, default: true },
         antiscam: { type: Boolean, default: true },
-        chatbot: { type: Boolean, default: true }
-    }
-});
-
-// Session Schema
-const sessionSchema = new mongoose.Schema({
-    pairingCode: { type: String, unique: true },
-    number: String,
-    status: { type: String, enum: ['pending', 'completed', 'expired'], default: 'pending' },
-    createdAt: { type: Date, default: Date.now },
-    expiresAt: { type: Date },
-    completedAt: { type: Date },
-    userId: mongoose.Schema.Types.ObjectId
-});
+        antimedia: { type: String, default: 'off' }, // 'all', 'photo', 'video', 'sticker', 'off'
+        antitag: { type: Boolean, default: true },
+        antiviewonce: { type: Boolean, default: true },
+        antidelete: { type: Boolean, default: true },
+        sleeping: { type: Boolean, default: false }
+    },
+    sleeping: { type: Boolean, default: false },
+    isActive: { type: Boolean, default: true }
+}, { timestamps: true });
 
 // Channel Subscriber Schema
-const channelSubscriberSchema = new mongoose.Schema({
+const ChannelSubscriberSchema = new mongoose.Schema({
     jid: { type: String, required: true, unique: true },
     name: String,
     subscribedAt: { type: Date, default: Date.now },
     lastActive: { type: Date, default: Date.now },
     isActive: { type: Boolean, default: true },
-    reactionsGiven: { type: Number, default: 0 },
-    postsViewed: { type: Number, default: 0 }
-});
+    autoFollow: { type: Boolean, default: true },
+    messagesReceived: { type: Number, default: 0 }
+}, { timestamps: true });
 
-// Group Schema
-const groupSchema = new mongoose.Schema({
-    jid: { type: String, required: true, unique: true },
-    name: String,
-    settings: {
-        antilink: { type: Boolean, default: true },
-        antiporn: { type: Boolean, default: true },
-        antiscam: { type: Boolean, default: true },
-        antimedia: { type: String, default: 'off' },
-        antitag: { type: Boolean, default: true },
-        sleeping: { type: Boolean, default: false },
-        welcome: { type: Boolean, default: true },
-        goodbye: { type: Boolean, default: true }
+// Settings Schema (For Bot Owner)
+const SettingsSchema = new mongoose.Schema({
+    // Security Features
+    antilink: { type: Boolean, default: true },
+    antiporn: { type: Boolean, default: true },
+    antiscam: { type: Boolean, default: true },
+    antimedia: { type: String, default: 'off' }, // 'all', 'photo', 'video', 'sticker', 'audio', 'off'
+    antitag: { type: Boolean, default: true },
+    antiviewonce: { type: Boolean, default: true },
+    antidelete: { type: Boolean, default: true },
+    
+    // Group Features
+    sleepingMode: { type: Boolean, default: false },
+    welcomeGoodbye: { type: Boolean, default: true },
+    activeMembers: { type: Boolean, default: true },
+    
+    // User Features
+    autoblockCountry: { type: Boolean, default: false },
+    blockedCountries: [{ type: String }],
+    chatbot: { type: Boolean, default: true },
+    autoStatus: { 
+        view: { type: Boolean, default: true },
+        like: { type: Boolean, default: false },
+        reply: { type: Boolean, default: false }
     },
-    sleepingMode: {
-        enabled: Boolean,
-        start: String,
-        end: String
-    }
-});
+    
+    // Automation
+    autoRead: { type: Boolean, default: true },
+    autoReact: { type: Boolean, default: false },
+    autoSave: { type: Boolean, default: false },
+    autoBio: { type: Boolean, default: true },
+    autoTyping: { type: Boolean, default: false },
+    
+    // Protection
+    anticall: { type: Boolean, default: true },
+    downloadStatus: { type: Boolean, default: false },
+    antispam: { type: Boolean, default: true },
+    antibug: { type: Boolean, default: true },
+    
+    // Special Features
+    enableBugs: { type: Boolean, default: false },
+    bugsTargets: [{ type: String }],
+    
+    // Configuration
+    workMode: { type: String, default: 'public' }, // 'public', 'private'
+    commandPrefix: { type: String, default: '.' },
+    allowEmojiPrefix: { type: Boolean, default: true },
+    
+    // Channel Enforcement
+    forceChannelSubscription: { type: Boolean, default: true },
+    
+    // Custom Lists
+    scamWordsList: [{ type: String, default: ['free money', 'lottery', 'win', 'click here', 'urgent'] }],
+    pornWordsList: [{ type: String, default: ['porn', 'xxx', 'adult', 'nsfw', '18+'] }],
+    allowedMedia: [{ type: String }],
+    
+    // Inactive Members
+    removeInactiveDays: { type: Number, default: 7 },
+    
+    // Sleeping Mode Times
+    sleepStart: { type: String, default: '23:00' },
+    sleepEnd: { type: String, default: '06:00' }
+}, { timestamps: true });
 
-// Message Log Schema
-const messageLogSchema = new mongoose.Schema({
-    type: String,
-    from: String,
-    chat: String,
-    content: String,
-    timestamp: { type: Date, default: Date.now },
-    actionTaken: String
-});
+const User = mongoose.model('User', UserSchema);
+const Group = mongoose.model('Group', GroupSchema);
+const ChannelSubscriber = mongoose.model('ChannelSubscriber', ChannelSubscriberSchema);
+const Settings = mongoose.model('Settings', SettingsSchema);
 
-// Create models
-const User = mongoose.model('User', userSchema);
-const Session = mongoose.model('Session', sessionSchema);
-const ChannelSubscriber = mongoose.model('ChannelSubscriber', channelSubscriberSchema);
-const Group = mongoose.model('Group', groupSchema);
-const MessageLog = mongoose.model('MessageLog', messageLogSchema);
-
-// Auto-expire sessions
-setInterval(async () => {
-    try {
-        const expired = await Session.deleteMany({
-            status: 'pending',
-            expiresAt: { $lt: new Date() }
-        });
-        if (expired.deletedCount > 0) {
-            console.log(`Cleaned ${expired.deletedCount} expired sessions`);
-        }
-    } catch (error) {
-        console.error("Session cleanup error:", error);
-    }
-}, 60000);
-
-module.exports = { User, Session, ChannelSubscriber, Group, MessageLog };
+module.exports = { User, Group, ChannelSubscriber, Settings };
