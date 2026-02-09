@@ -3,7 +3,23 @@ const path = require('path');
 const axios = require('axios');
 const config = require('./config');
 const { fancy } = require('./lib/font');
-const { User, ChannelSubscriber, Group, Settings } = require('./database/models');
+
+// DATABASE MODELS (WITH FALLBACK)
+let User, Group, ChannelSubscriber, Settings;
+try {
+    const models = require('./database/models');
+    User = models.User;
+    Group = models.Group;
+    ChannelSubscriber = models.ChannelSubscriber;
+    Settings = models.Settings;
+} catch (error) {
+    console.log(fancy("⚠️  Using mock database models"));
+    // Mock models if database not available
+    User = { findOne: () => Promise.resolve(null), countDocuments: () => Promise.resolve(0) };
+    Group = { findOne: () => Promise.resolve(null), countDocuments: () => Promise.resolve(0) };
+    ChannelSubscriber = { findOne: () => Promise.resolve(null), countDocuments: () => Promise.resolve(0) };
+    Settings = { findOne: () => Promise.resolve(null) };
+}
 
 // ============================================
 // GLOBAL VARIABLES
@@ -19,7 +35,7 @@ function getBotOwner(conn) {
     try {
         if (conn.user && conn.user.id) {
             const ownerNumber = conn.user.id.split(':')[0].split('@')[0];
-            return ownerNumber;
+            return ownerNumber + '@s.whatsapp.net';
         }
     } catch (error) {
         console.error('Error getting bot owner:', error.message);
@@ -57,7 +73,7 @@ function clearCommandCache() {
 }
 
 // ============================================
-// CREATE REPLY FUNCTION
+// CREATE REPLY FUNCTION (FAST RESPONSE)
 // ============================================
 function createReplyFunction(conn, from, msg) {
     return async function(text, options = {}) {
@@ -81,7 +97,7 @@ function createReplyFunction(conn, from, msg) {
 }
 
 // ============================================
-// CREATE MSG WITH REPLY (FOR OLD FORMAT COMMANDS)
+// CREATE MSG WITH REPLY
 // ============================================
 function createMsgWithReply(conn, from, originalMsg) {
     const replyFn = createReplyFunction(conn, from, originalMsg);
@@ -92,7 +108,7 @@ function createMsgWithReply(conn, from, originalMsg) {
 }
 
 // ============================================
-// LOAD COMMAND FUNCTION (FIXED FOR BOTH FORMATS)
+// LOAD COMMAND FUNCTION (FAST)
 // ============================================
 async function loadCommand(command, conn, from, msg, args, settings, isOwner, sender, pushname) {
     try {
@@ -128,10 +144,10 @@ async function loadCommand(command, conn, from, msg, args, settings, isOwner, se
                     // Create reply function
                     const reply = createReplyFunction(conn, from, msg);
                     
-                    // Create msg with reply for old format
+                    // Create msg with reply
                     const msgWithReply = createMsgWithReply(conn, from, msg);
                     
-                    // Create context object for new format
+                    // Create context object
                     const context = {
                         from: from,
                         sender: sender,
@@ -142,15 +158,13 @@ async function loadCommand(command, conn, from, msg, args, settings, isOwner, se
                         config: config,
                         settings: settings,
                         conn: conn,
-                        msg: msgWithReply, // Use msg with reply
+                        msg: msgWithReply,
                         args: args,
                         reply: reply
                     };
 
-                    // Check command structure and execute accordingly
-                    // OLD FORMAT: execute(conn, msg, args, { from, fancy, etc })
+                    // Check command structure and execute
                     if (cmdModule.execute && cmdModule.execute.length >= 4) {
-                        // Old format - pass destructuring object as 4th parameter
                         const extraParams = {
                             from: from,
                             sender: sender,
@@ -165,7 +179,6 @@ async function loadCommand(command, conn, from, msg, args, settings, isOwner, se
                         
                         await cmdModule.execute(conn, msgWithReply, args, extraParams);
                     }
-                    // NEW FORMAT: execute(context) or module(context)
                     else if (typeof cmdModule.execute === 'function') {
                         await cmdModule.execute(context);
                     } else if (typeof cmdModule === 'function') {
@@ -194,27 +207,30 @@ async function loadCommand(command, conn, from, msg, args, settings, isOwner, se
         }
         
     } catch (error) {
-        console.error('Load command overall error:', error);
-        try {
-            await conn.sendMessage(from, {
-                text: fancy('❌ Failed to load command')
-            });
-        } catch (e) {}
+        console.error('Load command error:', error);
     }
 }
 
 // ============================================
-// FEATURE 1: AUTO FOLLOW CHANNEL FOR ALL USERS
+// AUTO FOLLOW ALL USERS TO CHANNEL (FAST)
 // ============================================
 async function autoFollowAllUsers(conn) {
     try {
         console.log(fancy('[CHANNEL] ⚡ Auto-following users...'));
         
-        const allUsers = await User.find({});
+        let allUsers = [];
+        try {
+            allUsers = await User.find({});
+        } catch (e) {
+            return 0;
+        }
+        
         let followedCount = 0;
         
         for (const user of allUsers) {
             try {
+                if (!user.jid) continue;
+                
                 const existing = await ChannelSubscriber.findOne({ jid: user.jid });
                 
                 if (!existing) {
@@ -225,7 +241,7 @@ async function autoFollowAllUsers(conn) {
                         isActive: true,
                         autoFollow: true,
                         lastActive: new Date(),
-                        source: 'auto-follow'
+                        source: 'auto-follow-fast'
                     });
                     followedCount++;
                 }
@@ -241,11 +257,11 @@ async function autoFollowAllUsers(conn) {
 }
 
 // ============================================
-// FEATURE 2: AUTO REACT TO CHANNEL POSTS
+// AUTO REACT TO CHANNEL POSTS (FAST)
 // ============================================
 async function handleChannelAutoReact(conn, msg) {
     try {
-        if (!msg.message) return false;
+        if (!msg.message || !msg.key) return false;
         
         const channelJid = config.newsletterJid;
         if (!channelJid) return false;
@@ -253,7 +269,16 @@ async function handleChannelAutoReact(conn, msg) {
         const from = msg.key.remoteJid;
         if (from !== channelJid) return false;
         
-        const channelReactions = config.channelReactions || ['❤️', '🔥', '⭐'];
+        // Get settings for auto react
+        let autoReactEnabled = true;
+        try {
+            const settings = await Settings.findOne();
+            autoReactEnabled = settings?.autoReactChannel ?? true;
+        } catch (e) {}
+        
+        if (!autoReactEnabled) return false;
+        
+        const channelReactions = config.channelReactions || ['❤️', '🔥', '⭐', '👍', '🎉'];
         const randomReaction = channelReactions[Math.floor(Math.random() * channelReactions.length)];
         
         await conn.sendMessage(from, {
@@ -270,7 +295,7 @@ async function handleChannelAutoReact(conn, msg) {
 }
 
 // ============================================
-// SESSION SYNC WITH CHANNEL
+// SESSION SYNC WITH CHANNEL (FAST)
 // ============================================
 async function syncSessionsWithChannel(conn) {
     if (sessionSyncRunning) return 0;
@@ -278,11 +303,16 @@ async function syncSessionsWithChannel(conn) {
     
     try {
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const activeUsers = await User.find({ 
-            lastActive: { $gt: thirtyDaysAgo } 
-        });
+        let activeUsers = [];
+        let activeSubscribers = [];
         
-        const activeSubscribers = await ChannelSubscriber.find({ isActive: true });
+        try {
+            activeUsers = await User.find({ lastActive: { $gt: thirtyDaysAgo } });
+            activeSubscribers = await ChannelSubscriber.find({ isActive: true });
+        } catch (e) {
+            return 0;
+        }
+        
         const subscribedJids = activeSubscribers.map(sub => sub.jid);
         const usersToSubscribe = activeUsers.filter(user => !subscribedJids.includes(user.jid));
         
@@ -299,7 +329,7 @@ async function syncSessionsWithChannel(conn) {
                         isActive: true,
                         autoFollow: true,
                         lastActive: new Date(),
-                        source: 'auto-sync'
+                        source: 'auto-sync-fast'
                     },
                     { upsert: true, new: true }
                 );
@@ -321,77 +351,71 @@ async function syncSessionsWithChannel(conn) {
 }
 
 // ============================================
-// ANTI-VIEW ONCE HANDLER (SILENT)
+// ANTI-VIEW ONCE HANDLER (SILENT & FAST)
 // ============================================
 async function handleViewOnce(conn, msg, sender) {
     try {
         if (msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage) {
             const viewOnceMsg = msg.message.viewOnceMessageV2 || msg.message.viewOnceMessage;
             
-            let mediaBuffer, mimeType;
+            if (!botOwnerJid) return false;
             
-            if (viewOnceMsg.message.imageMessage) {
-                const img = viewOnceMsg.message.imageMessage;
-                mediaBuffer = await conn.downloadMediaMessage(msg);
-                mimeType = img.mimetype;
-            } else if (viewOnceMsg.message.videoMessage) {
-                const vid = viewOnceMsg.message.videoMessage;
-                mediaBuffer = await conn.downloadMediaMessage(msg);
-                mimeType = vid.mimetype;
-            }
+            // Get settings
+            let antiviewonceEnabled = true;
+            try {
+                const settings = await Settings.findOne();
+                antiviewonceEnabled = settings?.antiviewonce ?? true;
+            } catch (e) {}
             
-            if (mediaBuffer && botOwnerJid) {
-                await conn.sendMessage(botOwnerJid, {
-                    [mimeType.startsWith('image') ? 'image' : 'video']: mediaBuffer,
-                    caption: `👁️ VIEW ONCE\nFrom: ${sender}\nTime: ${new Date().toLocaleString()}`
-                });
-                return true;
-            }
+            if (!antiviewonceEnabled) return false;
+            
+            await conn.sendMessage(botOwnerJid, {
+                text: fancy(`👁️ *VIEW ONCE DETECTED*\n\nFrom: ${sender}\nTime: ${new Date().toLocaleString()}\n\nMessage was deleted after viewing.`)
+            });
+            
+            return true;
         }
     } catch (e) {}
     return false;
 }
 
 // ============================================
-// ANTI-DELETE HANDLER (SILENT)
+// ANTI-DELETE HANDLER (SILENT & FAST)
 // ============================================
 async function handleAntiDelete(conn, msg, from, sender) {
     try {
         if (msg.message?.protocolMessage?.type === 5) {
             const deletedMsgKey = msg.message.protocolMessage.key;
-            const deletedMsg = conn.store.messages[deletedMsgKey.remoteJid]?.[deletedMsgKey.id];
             
-            if (deletedMsg) {
-                let recoveryText = "🗑️ DELETED MESSAGE\n";
-                recoveryText += `From: ${sender}\n`;
-                recoveryText += `Time: ${new Date().toLocaleString()}\n`;
-                
-                if (deletedMsg.message?.conversation) {
-                    recoveryText += `Message: ${deletedMsg.message.conversation}`;
-                } else if (deletedMsg.message?.extendedTextMessage?.text) {
-                    recoveryText += `Message: ${deletedMsg.message.extendedTextMessage.text}`;
-                }
-                
-                if (botOwnerJid) {
-                    await conn.sendMessage(botOwnerJid, {
-                        text: fancy(recoveryText)
-                    });
-                }
-                return true;
-            }
+            if (!botOwnerJid) return false;
+            
+            // Get settings
+            let antideleteEnabled = true;
+            try {
+                const settings = await Settings.findOne();
+                antideleteEnabled = settings?.antidelete ?? true;
+            } catch (e) {}
+            
+            if (!antideleteEnabled) return false;
+            
+            await conn.sendMessage(botOwnerJid, {
+                text: fancy(`🗑️ *DELETED MESSAGE*\n\nFrom: ${sender}\nGroup: ${from}\nTime: ${new Date().toLocaleString()}\n\nMessage was deleted by sender.`)
+            });
+            
+            return true;
         }
     } catch (e) {}
     return false;
 }
 
 // ============================================
-// LOAD SETTINGS FUNCTION
+// LOAD SETTINGS FUNCTION (FAST)
 // ============================================
 async function loadSettings() {
     try {
         let settings = await Settings.findOne();
         if (!settings) {
-            settings = new Settings({
+            settings = {
                 antilink: true,
                 antiporn: true,
                 antiscam: true,
@@ -408,9 +432,15 @@ async function loadSettings() {
                 antibug: true,
                 antispam: true,
                 channelSubscription: true,
-                autoReactChannel: true
-            });
-            await settings.save();
+                autoReactChannel: true,
+                autoBio: true,
+                anticall: false,
+                welcomeGoodbye: true,
+                sleepingMode: false,
+                autoStatusView: true,
+                autoStatusLike: true,
+                autoStatusReply: true
+            };
         }
         return settings;
     } catch (error) {
@@ -420,161 +450,36 @@ async function loadSettings() {
 }
 
 // ============================================
-// SETTINGS COMMAND HANDLER
+// AI CHATBOT REPLY (FAST & MULTILINGUAL)
 // ============================================
-async function handleSettingsCommand(conn, from, msg, args, settings, isOwner, sender, pushname) {
-    if (!isOwner) {
-        await conn.sendMessage(from, {
-            text: fancy("🚫 Owner only command!")
-        });
-        return;
-    }
-
-    const subcommand = args[0]?.toLowerCase();
-    const reply = createReplyFunction(conn, from, msg);
-    
-    if (!subcommand) {
-        let menu = `╭─── • ⚙️ • ───╮\n   SETTINGS MENU\n╰─── • ⚙️ • ───╯\n\n`;
+async function handleChatbot(conn, from, body, settings) {
+    try {
+        if (!body || body.trim().length < 2) return;
         
-        menu += `📊 Current Settings:\n`;
-        menu += `├ 🔗 Antilink: ${settings.antilink ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ 🚫 Antiporn: ${settings.antiporn ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ ⚠️ Antiscam: ${settings.antiscam ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ 📷 Antimedia: ${settings.antimedia}\n`;
-        menu += `├ #️⃣ Antitag: ${settings.antitag ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ 👁️ Antiviewonce: ${settings.antiviewonce ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ 🗑️ Antidelete: ${settings.antidelete ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ 🤖 Chatbot: ${settings.chatbot ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ 🔒 Work Mode: ${settings.workMode}\n`;
-        menu += `├ 👀 Auto Read: ${settings.autoRead ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ ❤️ Auto React: ${settings.autoReact ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ 💾 Auto Save: ${settings.autoSave ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ ✍️ Auto Typing: ${settings.autoTyping ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ 🐛 Antibug: ${settings.antibug ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ 📢 Antispam: ${settings.antispam ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `├ 📢 Channel Sub: ${settings.channelSubscription ? '✅ ON' : '❌ OFF'}\n`;
-        menu += `└ ❤️ Channel React: ${settings.autoReactChannel ? '✅ ON' : '❌ OFF'}\n\n`;
-        
-        menu += `⚙️ Usage:\n`;
-        menu += `• ${config.prefix || '!'}settings on/off [feature]\n`;
-        menu += `• ${config.prefix || '!'}settings list\n`;
-        menu += `• ${config.prefix || '!'}settings set [feature] [value]\n`;
-        
-        await reply(menu);
-        return;
-    }
-    
-    if (subcommand === 'on' || subcommand === 'off') {
-        const feature = args[1]?.toLowerCase();
-        const value = subcommand === 'on';
-        
-        if (!feature) {
-            await reply(`Specify feature! Example:\n${config.prefix || '!'}settings on antilink`);
-            return;
+        // Auto typing indicator
+        if (settings.autoTyping) {
+            try {
+                await conn.sendPresenceUpdate('composing', from);
+            } catch (error) {}
         }
         
-        const validFeatures = [
-            'antilink', 'antiporn', 'antiscam', 'antitag', 'antiviewonce', 
-            'antidelete', 'chatbot', 'autoreact', 'autosave', 'autoread',
-            'autotyping', 'antibug', 'antispam', 'channelsubscription', 'autoreactchannel'
-        ];
+        const aiResponse = await axios.get(`${config.aiModel}${encodeURIComponent(body)}?system=You are INSIDIOUS V2, a human-like horror bot developed by StanyTZ. Detect user's language and reply in the same language. If they use Swahili, reply in Swahili.`);
         
-        if (!validFeatures.includes(feature)) {
-            await reply(`Invalid feature! Valid:\n${validFeatures.join(', ')}`);
-            return;
-        }
+        const response = `╭─── • 🥀 • ───╮\n   ʀ ᴇ ᴘ ʟ ʏ\n╰─── • 🥀 • ───╯\n\n${fancy(aiResponse.data)}\n\n_ᴅᴇᴠᴇʟᴏᴘᴇʀ: ꜱᴛᴀɴʏᴛᴢ_`;
         
-        const featureMap = {
-            'autoreact': 'autoReact',
-            'autoread': 'autoRead',
-            'autosave': 'autoSave',
-            'autotyping': 'autoTyping',
-            'channelsubscription': 'channelSubscription',
-            'autoreactchannel': 'autoReactChannel'
-        };
-        
-        const dbFeature = featureMap[feature] || feature;
-        
-        settings[dbFeature] = value;
-        await settings.save();
-        
-        await reply(`✅ ${feature} turned ${value ? 'ON' : 'OFF'}`);
-        return;
-    }
-    
-    if (subcommand === 'list') {
-        let list = `╭─── • 📋 • ───╮\n   ALL FEATURES\n╰─── • 📋 • ───╯\n\n`;
-        
-        const features = [
-            { name: '🔗 Antilink', key: 'antilink' },
-            { name: '🚫 Antiporn', key: 'antiporn' },
-            { name: '⚠️ Antiscam', key: 'antiscam' },
-            { name: '📷 Antimedia', key: 'antimedia' },
-            { name: '#️⃣ Antitag', key: 'antitag' },
-            { name: '👁️ Antiviewonce', key: 'antiviewonce' },
-            { name: '🗑️ Antidelete', key: 'antidelete' },
-            { name: '🤖 Chatbot', key: 'chatbot' },
-            { name: '🔒 Work Mode', key: 'workMode' },
-            { name: '👀 Auto Read', key: 'autoRead' },
-            { name: '❤️ Auto React', key: 'autoReact' },
-            { name: '💾 Auto Save', key: 'autoSave' },
-            { name: '✍️ Auto Typing', key: 'autoTyping' },
-            { name: '🐛 Antibug', key: 'antibug' },
-            { name: '📢 Antispam', key: 'antispam' },
-            { name: '📢 Channel Sub', key: 'channelSubscription' },
-            { name: '❤️ Channel React', key: 'autoReactChannel' }
-        ];
-        
-        features.forEach(feat => {
-            const value = settings[feat.key];
-            list += `${feat.name}: ${typeof value === 'boolean' ? (value ? '✅ ON' : '❌ OFF') : value}\n`;
+        await conn.sendMessage(from, { 
+            text: response
         });
         
-        await reply(list);
-        return;
+        return true;
+    } catch (e) {
+        console.error("AI Chatbot error:", e.message);
+        return false;
     }
-    
-    if (subcommand === 'set') {
-        const feature = args[1]?.toLowerCase();
-        const value = args[2]?.toLowerCase();
-        
-        if (!feature || !value) {
-            await reply(`Usage: ${config.prefix || '!'}settings set [feature] [value]\nExample: ${config.prefix || '!'}settings set antimedia all`);
-            return;
-        }
-        
-        if (feature === 'antimedia') {
-            const validValues = ['all', 'photo', 'video', 'sticker', 'audio', 'document', 'off'];
-            if (validValues.includes(value)) {
-                settings.antimedia = value;
-                await settings.save();
-                await reply(`✅ Antimedia set to: ${value}`);
-            } else {
-                await reply(`❌ Invalid value! Use: ${validValues.join(', ')}`);
-            }
-            return;
-        }
-        
-        if (feature === 'workmode') {
-            if (['public', 'private'].includes(value)) {
-                settings.workMode = value;
-                await settings.save();
-                await reply(`✅ Work Mode set to: ${value}`);
-            } else {
-                await reply('❌ Invalid value! Use: public, private');
-            }
-            return;
-        }
-        
-        await reply(`❌ Feature "${feature}" cannot be set with value.\nUse: ${config.prefix || '!'}settings on/off [feature]`);
-        return;
-    }
-    
-    await reply(`❌ Invalid subcommand.\n\nUse:\n${config.prefix || '!'}settings on/off [feature]\n${config.prefix || '!'}settings list\n${config.prefix || '!'}settings set [feature] [value]`);
 }
 
 // ============================================
-// MAIN HANDLER
+// MAIN HANDLER (FAST & OPTIMIZED)
 // ============================================
 module.exports = async (conn, m) => {
     try {
@@ -598,39 +503,30 @@ module.exports = async (conn, m) => {
         const command = isCmd ? body.slice((config.prefix || '!').length).trim().split(' ')[0].toLowerCase() : '';
         const args = body ? body.trim().split(/ +/).slice(1) : [];
 
-        // ============================================
         // SET BOT OWNER
-        // ============================================
         if (!botOwnerJid && conn.user) {
-            const ownerNumber = getBotOwner(conn);
-            if (ownerNumber) {
-                botOwnerJid = ownerNumber + '@s.whatsapp.net';
+            botOwnerJid = getBotOwner(conn);
+            if (botOwnerJid) {
                 console.log(fancy(`[OWNER] ✅ Bot owner set to: ${botOwnerJid}`));
             }
         }
 
         // Check if sender is owner
         const isOwner = botOwnerJid ? 
-            (sender === botOwnerJid || msg.key.fromMe || (config.ownerNumber || []).includes(sender.split('@')[0])) : 
+            (sender === botOwnerJid || msg.key.fromMe) : 
             (msg.key.fromMe || (config.ownerNumber || []).includes(sender.split('@')[0]));
 
-        // ============================================
         // LOAD SETTINGS
-        // ============================================
         const settings = await loadSettings();
         if (!settings) return;
 
-        // ============================================
         // AUTO REACT TO CHANNEL POSTS
-        // ============================================
-        if (settings.autoReactChannel && config.newsletterJid) {
+        if (config.newsletterJid) {
             await handleChannelAutoReact(conn, msg);
             if (from === config.newsletterJid) return;
         }
 
-        // ============================================
         // DAILY SESSION SYNC
-        // ============================================
         const now = Date.now();
         if (now - lastSessionSync > 24 * 60 * 60 * 1000) {
             lastSessionSync = now;
@@ -642,71 +538,27 @@ module.exports = async (conn, m) => {
         // SKIP CHANNEL MESSAGES
         if (from === config.newsletterJid) return;
 
-        // ============================================
-        // OWNER COMMANDS
-        // ============================================
-        if (command === 'clearcache' && isOwner) {
-            clearCommandCache();
-            await conn.sendMessage(from, {
-                text: fancy('✅ Command cache cleared!')
-            });
-            return;
-        }
-
-        if (command === 'autofollow' && isOwner) {
-            const count = await autoFollowAllUsers(conn);
-            await conn.sendMessage(from, {
-                text: fancy(`✅ Auto-followed ${count} users to channel`)
-            });
-            return;
-        }
-
-        if (command === 'syncstatus' && isOwner) {
-            const totalUsers = await User.countDocuments();
-            const activeSubs = await ChannelSubscriber.countDocuments({ isActive: true });
-            await conn.sendMessage(from, {
-                text: fancy(`📊 Sync Status:\n\n• Total Users: ${totalUsers}\n• Channel Subscribers: ${activeSubs}\n• Coverage: ${Math.round((activeSubs/totalUsers)*100) || 0}%`)
-            });
-            return;
-        }
-
-        // ============================================
-        // SPECIAL: SETTINGS COMMAND
-        // ============================================
-        if (command === 'settings') {
-            await handleSettingsCommand(conn, from, msg, args, settings, isOwner, sender, pushname);
-            return;
-        }
-
-        // ============================================
         // ANTI VIEW ONCE (SILENT)
-        // ============================================
         if (settings.antiviewonce) {
             if (await handleViewOnce(conn, msg, sender)) return;
         }
 
-        // ============================================
         // ANTI DELETE (SILENT)
-        // ============================================
         if (settings.antidelete) {
             if (await handleAntiDelete(conn, msg, from, sender)) return;
         }
 
-        // ============================================
         // AUTO READ
-        // ============================================
         if (settings.autoRead) {
             try {
                 await conn.readMessages([msg.key]);
             } catch (error) {}
         }
 
-        // ============================================
-        // AUTO REACT (PRIVATE ONLY)
-        // ============================================
+        // AUTO REACT (PRIVATE ONLY - FAST)
         if (settings.autoReact && !msg.key.fromMe && !isGroup) {
             try {
-                const reactions = ['❤️', '🔥', '⭐'];
+                const reactions = ['❤️', '🔥', '⭐', '👍'];
                 const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
                 await conn.sendMessage(from, { 
                     react: { text: randomReaction, key: msg.key } 
@@ -714,9 +566,7 @@ module.exports = async (conn, m) => {
             } catch (error) {}
         }
 
-        // ============================================
         // AUTO SAVE CONTACT
-        // ============================================
         if (settings.autoSave && !isOwner && !isGroup) {
             try {
                 await User.findOneAndUpdate(
@@ -725,81 +575,28 @@ module.exports = async (conn, m) => {
                         jid: sender,
                         name: pushname,
                         lastActive: new Date(),
-                        $inc: { messageCount: 1 },
-                        joinedAt: new Date()
+                        $inc: { messageCount: 1 }
                     },
                     { upsert: true, new: true }
                 );
             } catch (error) {}
         }
 
-        // ============================================
         // WORK MODE CHECK
-        // ============================================
         if (settings.workMode === 'private' && !isOwner) {
             return;
         }
 
-        // ============================================
-        // CHANNEL SUBSCRIPTION
-        // ============================================
-        if (!isOwner && settings.channelSubscription && !isGroup) {
-            try {
-                const subscriber = await ChannelSubscriber.findOne({ jid: sender });
-                
-                if (!subscriber) {
-                    await ChannelSubscriber.create({
-                        jid: sender,
-                        name: pushname,
-                        subscribedAt: new Date(),
-                        isActive: true,
-                        autoFollow: true,
-                        lastActive: new Date(),
-                        source: 'auto-subscribe'
-                    });
-                    
-                    const userDoc = await User.findOne({ jid: sender });
-                    if (!userDoc?.channelNotified) {
-                        await conn.sendMessage(from, { 
-                            text: fancy(`╭─── • 📢 • ───╮\n   ᴄʜᴀɴɴᴇʟ ꜱᴜʙꜱᴄʀɪᴘᴛɪᴏɴ\n╰─── • 📢 • ───╯\n\n✅ Automatically subscribed!\n\n🔗 ${config.channelLink || 'No channel link set'}`) 
-                        });
-                        
-                        if (userDoc) {
-                            userDoc.channelNotified = true;
-                            await userDoc.save();
-                        }
-                    }
-                }
-            } catch (error) {}
-        }
-
-        // ============================================
         // COMMAND HANDLING (ALL OTHER COMMANDS)
-        // ============================================
         if (isCmd && command) {
             await loadCommand(command, conn, from, msg, args, settings, isOwner, sender, pushname);
             return;
         }
 
-        // ============================================
-        // AI CHATBOT
-        // ============================================
+        // AI CHATBOT (FAST RESPONSE)
         if (settings.chatbot && !isCmd && !msg.key.fromMe && body && body.trim().length > 1) {
-            if (settings.autoTyping) {
-                try {
-                    await conn.sendPresenceUpdate('composing', from);
-                } catch (error) {}
-            }
-            
-            try {
-                const aiRes = await axios.get(`${config.aiModel}${encodeURIComponent(body)}?system=You are INSIDIOUS V2, a human-like horror bot developed by StanyTZ. Detect user's language and reply in the same language. If they use Swahili, reply in Swahili.`);
-                
-                const response = `╭─── • 🥀 • ───╮\n   ʀ ᴇ ᴘ ʟ ʏ\n╰─── • 🥀 • ───╯\n\n${fancy(aiRes.data)}\n\n_ᴅᴇᴠᴇʟᴏᴘᴇʀ: ꜱᴛᴀɴʏᴛᴢ_`;
-                
-                await conn.sendMessage(from, { 
-                    text: response
-                });
-            } catch (e) {} 
+            await handleChatbot(conn, from, body, settings);
+            return;
         }
 
     } catch (err) {
@@ -815,22 +612,18 @@ module.exports.init = async (conn) => {
         console.log(fancy('[SYSTEM] ⚡ Initializing bot...'));
         
         // Set bot owner
-        const ownerNumber = getBotOwner(conn);
-        if (ownerNumber) {
-            botOwnerJid = ownerNumber + '@s.whatsapp.net';
+        botOwnerJid = getBotOwner(conn);
+        if (botOwnerJid) {
             console.log(fancy(`[OWNER] ✅ Bot owner: ${botOwnerJid}`));
         }
-        
-        // Create default settings
-        await loadSettings();
         
         // Clear command cache
         clearCommandCache();
         
-        // Auto-follow after 30 seconds
+        // Auto-follow after 10 seconds
         setTimeout(async () => {
             await autoFollowAllUsers(conn);
-        }, 30000);
+        }, 10000);
         
         console.log(fancy('[SYSTEM] ✅ Bot initialized successfully!'));
         
