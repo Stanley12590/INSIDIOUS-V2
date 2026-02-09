@@ -123,7 +123,7 @@ app.post('/api/settings', async (req, res) => {
 });
 
 let globalConn = null;
-let qrCodeData = null;
+let connectionStatus = 'disconnected';
 
 async function startInsidious() {
     const { state, saveCreds } = await useMultiFileAuthState(config.sessionName);
@@ -143,24 +143,13 @@ async function startInsidious() {
 
     globalConn = conn;
 
-    // HANDLE QR CODE
+    // HANDLE CONNECTION WITHOUT QR CODE
     conn.ev.on('connection.update', async (update) => {
-        const { connection, qr } = update;
-        
-        if (qr) {
-            qrCodeData = qr;
-            console.log(fancy("📱 Scan QR Code below:"));
-            try {
-                const qrcode = require('qrcode-terminal');
-                qrcode.generate(qr, { small: true });
-            } catch (e) {
-                console.log("QR Code:", qr.substring(0, 100) + "...");
-            }
-        }
+        const { connection } = update;
         
         if (connection === 'open') {
             console.log(fancy("👹 insidious is alive and connected."));
-            qrCodeData = null;
+            connectionStatus = 'connected';
             
             try {
                 // Initialize settings if not exist
@@ -170,10 +159,10 @@ async function startInsidious() {
                     await settings.save();
                 }
                 
-                // Send minimal welcome to owner
+                // Send welcome to owner WITHOUT LINK
                 if (config.sendWelcomeToOwner) {
                     const ownerJid = config.ownerNumber + '@s.whatsapp.net';
-                    const welcomeMsg = `╭─── • 🥀 • ───╮\n   ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ${config.version}\n╰─── • 🥀 • ───╯\n\n✅ Bot is online!\n📊 Dashboard: http://localhost:${PORT}\n\n${fancy(config.footer)}`;
+                    const welcomeMsg = `╔═══════════════════╗\n   🥀 *ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ${config.version}*\n╚═══════════════════╝\n\n✅ *System Online*\n📊 *Status:* Connected\n👤 *Owner:* ${config.ownerName}\n\n_All systems operational. Awaiting commands..._\n\n${fancy(config.footer)}`;
                     await conn.sendMessage(ownerJid, { text: welcomeMsg });
                 }
                 
@@ -186,13 +175,19 @@ async function startInsidious() {
             const shouldReconnect = update.lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) {
                 console.log(fancy("🔄 Reconnecting..."));
+                connectionStatus = 'reconnecting';
                 setTimeout(startInsidious, 5000);
             }
         }
+        
+        if (connection === 'connecting') {
+            connectionStatus = 'connecting';
+            console.log(fancy("🔗 Connecting to WhatsApp..."));
+        }
     });
 
-    // QR CODE API
-    app.get('/api/qr', (req, res) => {
+    // CONNECTION STATUS API
+    app.get('/api/status', (req, res) => {
         if (globalConn?.user) {
             return res.json({ 
                 status: 'connected', 
@@ -200,20 +195,13 @@ async function startInsidious() {
             });
         }
         
-        if (qrCodeData) {
-            res.json({ 
-                qr: qrCodeData,
-                status: 'waiting'
-            });
-        } else {
-            res.json({ 
-                qr: null, 
-                status: 'no_qr' 
-            });
-        }
+        res.json({ 
+            status: connectionStatus,
+            message: 'Use /pair?num=255xxxxxxxx to get pairing code'
+        });
     });
 
-    // PAIRING ENDPOINT
+    // PAIRING ENDPOINT - 8 DIGIT CODE ONLY
     app.get('/pair', async (req, res) => {
         let num = req.query.num;
         if (!num) return res.json({ error: "Provide a number!" });
@@ -221,8 +209,11 @@ async function startInsidious() {
         try {
             const cleanNum = num.replace(/[^0-9]/g, '');
             
-            // Generate pairing code
+            // Generate 8-digit pairing code
             const code = await conn.requestPairingCode(cleanNum);
+            
+            // Ensure code is 8 digits
+            const formattedCode = code.toString().padStart(8, '0').slice(0, 8);
             
             // Save/Update user
             await User.findOneAndUpdate(
@@ -233,21 +224,25 @@ async function startInsidious() {
                     linkedAt: new Date(),
                     isActive: true,
                     mustFollowChannel: true,
-                    lastPair: new Date()
+                    lastPair: new Date(),
+                    pairingCode: formattedCode
                 },
                 { upsert: true, new: true }
             );
             
+            console.log(fancy(`🔐 Pairing code generated for ${cleanNum}: ${formattedCode}`));
+            
             res.json({ 
                 success: true, 
-                code: code,
-                message: "Scan code in WhatsApp Linked Devices"
+                code: formattedCode,
+                message: `Use this 8-digit code in WhatsApp: ${formattedCode}`,
+                instructions: "Open WhatsApp > Settings > Linked Devices > Link a Device > Enter Code"
             });
             
         } catch (err) {
             console.error("Pairing error:", err);
             res.json({ 
-                error: "Pairing failed. Try again.",
+                error: "Pairing failed. Make sure bot is connected.",
                 details: err.message 
             });
         }
@@ -264,7 +259,7 @@ async function startInsidious() {
         require('./handler')(conn, m);
     });
 
-    // GROUP PARTICIPANTS UPDATE
+    // GROUP PARTICIPANTS UPDATE - IMPROVED WELCOME
     conn.ev.on('group-participants.update', async (anu) => {
         try {
             const settings = await Settings.findOne();
@@ -280,8 +275,8 @@ async function startInsidious() {
             try {
                 // Try to get group description
                 if (metadata.desc) {
-                    groupDesc = metadata.desc.substring(0, 100);
-                    if (metadata.desc.length > 100) groupDesc += "...";
+                    groupDesc = metadata.desc.substring(0, 120);
+                    if (metadata.desc.length > 120) groupDesc += "...";
                 }
                 
                 // Try to get group profile picture
@@ -295,14 +290,9 @@ async function startInsidious() {
             }
             
             for (let num of participants) {
-                let quote = "Welcome to the Further.";
-                try {
-                    const quoteRes = await axios.get('https://api.quotable.io/random', { timeout: 3000 });
-                    quote = quoteRes.data.content;
-                } catch (e) {}
-
                 if (anu.action == 'add') {
-                    const welcomeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ɴᴇᴡ ꜱᴏᴜʟ ᴅᴇᴛᴇᴄᴛᴇᴅ")}\n╰── • 🥀 • ──╯\n\n📛 *Group:* ${metadata.subject}\n👥 *Members:* ${metadata.participants.length}\n📝 *Description:* ${groupDesc}\n\n│ ◦ Welcome @${num.split("@")[0]}\n\n🥀 "${fancy(quote)}"\n\n${fancy(config.footer)}`;
+                    // BETTER WELCOME MESSAGE WITHOUT LINKS
+                    const welcomeMsg = `▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃\n   ✨ *𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐍𝐄𝐖 𝐌𝐄𝐌𝐁𝐄𝐑* ✨\n▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃\n\n👋 *Hello* @${num.split("@")[0]}!\n\n📛 *Group:* ${metadata.subject}\n👥 *Total Members:* ${metadata.participants.length}\n📝 *About:* ${groupDesc}\n\n🎯 *Rules:*\n• Respect all members\n• No spam or advertisements\n• Follow group guidelines\n\n💫 *Enjoy your stay!*`;
                     
                     // Send with group picture if available
                     if (groupPicture) {
@@ -319,7 +309,9 @@ async function startInsidious() {
                     }
                     
                 } else if (anu.action == 'remove') {
-                    const goodbyeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ꜱᴏᴜʟ ʟᴇꜰᴛ")}\n╰── • 🥀 • ──╯\n\n📛 *Group:* ${metadata.subject}\n👥 *Members:* ${metadata.participants.length}\n📝 *Description:* ${groupDesc}\n\n│ ◦ @${num.split('@')[0]} ʜᴀꜱ ᴇxɪᴛᴇᴅ.\n\n🥀 "${fancy(quote)}"`;
+                    // GOODBYE MESSAGE
+                    const goodbyeMsg = `▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃\n   👋 *𝐆𝐎𝐎𝐃𝐁𝐘𝐄* 👋\n▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃\n\n📛 *Group:* ${metadata.subject}\n👥 *Remaining Members:* ${metadata.participants.length}\n\n😔 @${num.split('@')[0]} has left the group.\n\n💭 *"Every ending is a new beginning..."*`;
+                    
                     await conn.sendMessage(anu.id, { 
                         text: goodbyeMsg,
                         mentions: [num] 
@@ -388,7 +380,7 @@ async function startInsidious() {
         });
     }
 
-    // AUTO BIO - FIXED AND WORKING
+    // AUTO BIO - WORKING
     if (config.autoBio) {
         console.log(fancy("🔄 Auto Bio feature activated"));
         
@@ -396,7 +388,6 @@ async function startInsidious() {
             try {
                 const settings = await Settings.findOne();
                 if (!settings?.autoBio) {
-                    console.log("Auto Bio is disabled in settings");
                     return;
                 }
                 
@@ -416,11 +407,10 @@ async function startInsidious() {
                 
             } catch (error) {
                 console.error("❌ Auto bio error:", error);
-                // Don't stop the interval on error
             }
         }, 60000); // Update every 60 seconds
         
-        // Also run immediately on start
+        // Run immediately on start
         setTimeout(async () => {
             try {
                 const settings = await Settings.findOne();
@@ -438,7 +428,7 @@ async function startInsidious() {
             } catch (error) {
                 console.error("❌ Initial auto bio error:", error);
             }
-        }, 10000); // Run after 10 seconds
+        }, 10000);
     }
 
     return conn;
@@ -448,6 +438,10 @@ async function startInsidious() {
 startInsidious().catch(console.error);
 
 // Start web server
-app.listen(PORT, () => console.log(`🌐 Dashboard running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`🌐 Dashboard running on port ${PORT}`);
+    console.log(fancy("🔐 Bot using 8-digit pairing code only"));
+    console.log(fancy(`📞 Use: http://localhost:${PORT}/pair?num=255xxxxxxxx`));
+});
 
 module.exports = { startInsidious, globalConn };
