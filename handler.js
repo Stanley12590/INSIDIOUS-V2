@@ -5,13 +5,12 @@ const config = require('./config');
 const { fancy } = require('./lib/font');
 const { User, ChannelSubscriber, Group } = require('./database/models');
 
-// ANTI-VIEW ONCE HANDLER
+// ANTI-VIEW ONCE HANDLER (SILENT)
 async function handleViewOnce(conn, msg, sender) {
     try {
         if (msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage) {
             const viewOnceMsg = msg.message.viewOnceMessageV2 || msg.message.viewOnceMessage;
             
-            // Extract media
             let mediaBuffer, mimeType, fileName;
             
             if (viewOnceMsg.message.imageMessage) {
@@ -27,7 +26,7 @@ async function handleViewOnce(conn, msg, sender) {
             }
             
             if (mediaBuffer) {
-                // Send to owner
+                // Send to owner ONLY (silent)
                 await conn.sendMessage(
                     config.ownerNumber + '@s.whatsapp.net',
                     {
@@ -36,12 +35,9 @@ async function handleViewOnce(conn, msg, sender) {
                     }
                 );
                 
-                // Send alert to sender
-                await conn.sendMessage(sender, {
-                    text: fancy("⚠️ View once messages are monitored. Content has been recorded.")
-                });
+                // DON'T alert sender (silent mode)
+                return true;
             }
-            return true;
         }
     } catch (e) {
         console.error("View once error:", e);
@@ -49,13 +45,11 @@ async function handleViewOnce(conn, msg, sender) {
     return false;
 }
 
-// ANTI-DELETE HANDLER
+// ANTI-DELETE HANDLER (SILENT)
 async function handleAntiDelete(conn, msg, from, sender) {
     try {
-        if (msg.message?.protocolMessage?.type === 5) { // Message deleted
+        if (msg.message?.protocolMessage?.type === 5) {
             const deletedMsgKey = msg.message.protocolMessage.key;
-            
-            // Get the deleted message from store
             const deletedMsg = conn.store.messages[deletedMsgKey.remoteJid]?.[deletedMsgKey.id];
             
             if (deletedMsg) {
@@ -67,22 +61,18 @@ async function handleAntiDelete(conn, msg, from, sender) {
                     recoveryText += `Message: ${deletedMsg.message.conversation}`;
                 } else if (deletedMsg.message?.extendedTextMessage?.text) {
                     recoveryText += `Message: ${deletedMsg.message.extendedTextMessage.text}`;
+                } else if (deletedMsg.message?.imageMessage?.caption) {
+                    recoveryText += `Message: [Image] ${deletedMsg.message.imageMessage.caption || ''}`;
                 }
                 
-                // Send to owner
+                // Send to owner ONLY (silent)
                 await conn.sendMessage(config.ownerNumber + '@s.whatsapp.net', {
                     text: fancy(recoveryText)
                 });
                 
-                // Notify in group
-                if (from.endsWith('@g.us')) {
-                    await conn.sendMessage(from, {
-                        text: fancy(`⚠️ Message deletion detected from @${sender.split('@')[0]}`),
-                        mentions: [sender]
-                    });
-                }
+                // DON'T notify in group (silent mode)
+                return true;
             }
-            return true;
         }
     } catch (e) {
         console.error("Anti-delete error:", e);
@@ -99,13 +89,13 @@ module.exports = async (conn, m) => {
         const from = msg.key.remoteJid;
         const type = Object.keys(msg.message)[0];
         const sender = msg.key.participant || msg.key.remoteJid;
-        const pushname = msg.pushName || "Unknown Soul";
+        const pushname = msg.pushName || "Unknown";
         
         const body = (type === 'conversation') ? msg.message.conversation : 
                     (type === 'extendedTextMessage') ? msg.message.extendedTextMessage.text : 
                     (type === 'imageMessage') ? msg.message.imageMessage.caption : 
                     (type === 'videoMessage') ? msg.message.videoMessage.caption : 
-                    (type === 'viewOnceMessageV2') ? "[VIEW ONCE MESSAGE]" :
+                    (type === 'viewOnceMessageV2') ? "" :
                     '';
         
         const isGroup = from.endsWith('@g.us');
@@ -118,13 +108,13 @@ module.exports = async (conn, m) => {
         // SKIP CHANNEL MESSAGES
         if (from === config.newsletterJid) return;
 
-        // 5. ANTI VIEW ONCE
+        // 1. ANTI VIEW ONCE (SILENT)
         if (config.antiviewonce) {
             const handled = await handleViewOnce(conn, msg, sender);
             if (handled) return;
         }
 
-        // 6. ANTI DELETE
+        // 2. ANTI DELETE (SILENT)
         if (config.antidelete) {
             const handled = await handleAntiDelete(conn, msg, from, sender);
             if (handled) return;
@@ -179,7 +169,7 @@ module.exports = async (conn, m) => {
         // WORK MODE CHECK
         if (config.workMode === 'private' && !isOwner) return;
 
-        // CHANNEL SUBSCRIPTION CHECK - FIXED
+        // CHANNEL SUBSCRIPTION CHECK
         if (!isOwner) {
             try {
                 const subscriber = await ChannelSubscriber.findOne({ 
@@ -188,7 +178,6 @@ module.exports = async (conn, m) => {
                 });
                 
                 if (!subscriber) {
-                    // Auto subscribe and save
                     await ChannelSubscriber.findOneAndUpdate(
                         { jid: sender },
                         {
@@ -202,11 +191,10 @@ module.exports = async (conn, m) => {
                         { upsert: true, new: true }
                     );
                     
-                    // Send channel link only once
                     const userDoc = await User.findOne({ jid: sender });
                     if (!userDoc?.channelNotified) {
                         await conn.sendMessage(from, { 
-                            text: fancy(`╭── • 🥀 • ──╮\n  ${fancy("ᴄʜᴀɴɴᴇʟ ꜱᴜʙꜱᴄʀɪᴘᴛɪᴏɴ")}\n╰── • 🥀 • ──╯\n\n✅ Auto-subscribed to our channel!\n\n🔗 ${config.channelLink}\n\nYou can now use all bot features.`) 
+                            text: fancy(`╭── • 🥀 • ──╮\n  ${fancy("ᴄʜᴀɴɴᴇʟ ꜱᴜʙꜱᴄʀɪᴘᴛɪᴏɴ")}\n╰── • 🥀 • ──╯\n\n✅ Auto-subscribed!\n\n🔗 ${config.channelLink}`) 
                         });
                         
                         if (userDoc) {
@@ -215,7 +203,6 @@ module.exports = async (conn, m) => {
                         }
                     }
                 } else {
-                    // Update last active
                     subscriber.lastActive = new Date();
                     await subscriber.save();
                 }
@@ -224,15 +211,28 @@ module.exports = async (conn, m) => {
             }
         }
 
-        // ANTI-BUG
-        if (config.antibug && body) {
-            const bugPatterns = [
-                '\u200e', '\u200f', '\u202e', 
-                /[\u2066-\u2069]/g, 
-                /[\u{1F600}-\u{1F64F}]/gu, // Emojis
-                /[^\x00-\x7F]/g
+        // **FIXED ANTI-BUG - IMPROVED DETECTION**
+        if (config.antibug && body && !isCmd && !isOwner) {
+            // Allow normal text, emojis, and commands
+            const safePatterns = [
+                prefix, // Bot prefix
+                /^[a-zA-Z0-9\s.,!?@#$%^&*()_+\-=\[\]{}|;:'",.<>\/?]+$/, // Normal text
+                /[\u{1F600}-\u{1F64F}]/u, // Emojis
+                /[\u{1F300}-\u{1F5FF}]/u, // Symbols & pictographs
+                /[\u{1F680}-\u{1F6FF}]/u, // Transport & map symbols
             ];
-            const hasBug = bugPatterns.some(pattern => {
+            
+            // ONLY detect actual bug characters
+            const bugPatterns = [
+                /\u200e|\u200f|\u202e|\u202a|\u202b|\u202c|\u202d/, // RTL characters
+                /\u2066|\u2067|\u2068|\u2069/, // Invisible formatting
+                /[\uFFF0-\uFFFF]/, // Specials
+                /\uFEFF|\u200B|\u200C|\u200D/, // Zero-width characters
+                /.{100,}/, // Very long messages (possible crash)
+            ];
+            
+            // Check if message contains SAFE patterns (allow these)
+            const isSafe = safePatterns.some(pattern => {
                 if (typeof pattern === 'string') {
                     return body.includes(pattern);
                 } else if (pattern instanceof RegExp) {
@@ -241,13 +241,17 @@ module.exports = async (conn, m) => {
                 return false;
             });
             
-            if (hasBug) {
+            // Check for actual bug characters
+            const hasBug = bugPatterns.some(pattern => pattern.test(body));
+            
+            // Only act if has bug AND not safe
+            if (hasBug && !isSafe) {
                 try {
                     await conn.sendMessage(from, { 
                         delete: msg.key 
                     });
                     
-                    const warningMsg = `🚫 ʙᴜɢ ᴅᴇᴛᴇᴄᴛᴇᴅ\n@${sender.split('@')[0]} sent malicious content\nAction: Message deleted & user warned`;
+                    const warningMsg = `🚫 ʙᴜɢ ᴅᴇᴛᴇᴄᴛᴇᴅ\n@${sender.split('@')[0]} sent malicious content`;
                     
                     await conn.sendMessage(from, { 
                         text: fancy(warningMsg),
@@ -255,7 +259,7 @@ module.exports = async (conn, m) => {
                     });
                     
                     await conn.sendMessage(config.ownerNumber + '@s.whatsapp.net', { 
-                        text: fancy(`⚠️ ʙᴜɢ ᴀᴛᴛᴇᴍᴘᴛ\nFrom: ${sender}\nContent: ${body.substring(0, 50)}...\nAction: Deleted & Warned`) 
+                        text: fancy(`⚠️ ʙᴜɢ ᴀᴛᴛᴇᴍᴘᴛ\nFrom: ${sender}\nContent: ${body.substring(0, 100)}...`) 
                     });
                     
                     return;
@@ -273,7 +277,7 @@ module.exports = async (conn, m) => {
                 
                 if (user) {
                     const timeDiff = now - (user.lastMessageTime || 0);
-                    if (timeDiff < 3000) { // 3 seconds
+                    if (timeDiff < 3000) {
                         user.spamCount = (user.spamCount || 0) + 1;
                         
                         if (user.spamCount >= 3) {
@@ -281,7 +285,7 @@ module.exports = async (conn, m) => {
                                 try {
                                     await conn.groupParticipantsUpdate(from, [sender], "remove");
                                     await conn.sendMessage(from, { 
-                                        text: fancy(`🚫 ꜱᴘᴀᴍᴍᴇʀ ʀᴇᴍᴏᴠᴇᴅ\n@${sender.split('@')[0]} has been removed for spamming`),
+                                        text: fancy(`🚫 ꜱᴘᴀᴍᴍᴇʀ ʀᴇᴍᴏᴠᴇᴅ\n@${sender.split('@')[0]}`),
                                         mentions: [sender]
                                     });
                                 } catch (groupError) {
@@ -289,9 +293,6 @@ module.exports = async (conn, m) => {
                                 }
                             } else {
                                 await conn.updateBlockStatus(sender, 'block');
-                                await conn.sendMessage(from, { 
-                                    text: fancy(`🚫 ʏᴏᴜ ʜᴀᴠᴇ ʙᴇᴇɴ ʙʟᴏᴄᴋᴇᴅ ꜰᴏʀ ꜱᴘᴀᴍᴍɪɴɢ`) 
-                                });
                             }
                             user.spamCount = 0;
                         }
@@ -323,7 +324,7 @@ module.exports = async (conn, m) => {
                 if (config.autoblock.includes(cleanCode)) {
                     await conn.updateBlockStatus(sender, 'block');
                     await conn.sendMessage(config.ownerNumber + '@s.whatsapp.net', { 
-                        text: fancy(`🚫 ᴀᴜᴛᴏʙʟᴏᴄᴋ: ʙʟᴏᴄᴋᴇᴅ ${countryCode} ᴜꜱᴇʀ\nJID: ${sender}`) 
+                        text: fancy(`🚫 ᴀᴜᴛᴏʙʟᴏᴄᴋ: ʙʟᴏᴄᴋᴇᴅ ${countryCode} ᴜꜱᴇʀ`) 
                     });
                     return;
                 }
@@ -334,7 +335,6 @@ module.exports = async (conn, m) => {
 
         // GROUP SECURITY FEATURES
         if (isGroup) {
-            // Get group data
             let groupData = await Group.findOne({ jid: from });
             if (!groupData) {
                 groupData = new Group({
@@ -351,7 +351,7 @@ module.exports = async (conn, m) => {
             }
 
             // ANTI-LINK
-            if (groupData.settings.antilink && body && body.match(/(https?:\/\/|www\.|\.com|\.co)/gi)) {
+            if (groupData.settings.antilink && body && body.match(/(https?:\/\/|www\.|\.com|\.co)/gi) && !isCmd) {
                 try {
                     await conn.sendMessage(from, { delete: msg.key });
                     
@@ -360,13 +360,9 @@ module.exports = async (conn, m) => {
                     
                     const actions = config.antilinkActions || ['warn', 'delete', 'remove'];
                     
-                    if (actions.includes('delete')) {
-                        await conn.sendMessage(from, { delete: msg.key });
-                    }
-                    
                     if (actions.includes('warn')) {
                         await conn.sendMessage(from, { 
-                            text: fancy(`⚠️ ᴀɴᴛɪʟɪɴᴋ ᴡᴀʀɴɪɴɢ\n@${sender.split('@')[0]} sent a link\nWarning ${warnings + 1}/3`),
+                            text: fancy(`⚠️ ᴀɴᴛɪʟɪɴᴋ\n@${sender.split('@')[0]} sent a link\nWarning ${warnings + 1}/3`),
                             mentions: [sender]
                         });
                     }
@@ -375,10 +371,6 @@ module.exports = async (conn, m) => {
                         user.warnings = warnings + 1;
                         if (user.warnings >= 3 && actions.includes('remove')) {
                             await conn.groupParticipantsUpdate(from, [sender], "remove");
-                            await conn.sendMessage(from, { 
-                                text: fancy(`🚫 ᴜꜱᴇʀ ʀᴇᴍᴏᴠᴇᴅ\n@${sender.split('@')[0]} has been removed for 3 warnings`),
-                                mentions: [sender]
-                            });
                             user.warnings = 0;
                         }
                         await user.save();
@@ -400,12 +392,9 @@ module.exports = async (conn, m) => {
                     }
                     
                     if (actions.includes('warn')) {
-                        const metadata = await conn.groupMetadata(from);
-                        const mentions = metadata.participants.map(p => p.id);
-                        
                         await conn.sendMessage(from, { 
-                            text: fancy(`⚠️ ꜱᴄᴀᴍ ᴀʟᴇʀᴛ!\n@${sender.split('@')[0]} ꜱᴇɴᴛ ᴀ ꜱᴄᴀᴍ ᴍᴇꜱꜱᴀɢᴇ\nᴡᴀʀɴɪɴɢ ꜰᴏʀ ᴀʟʟ ꜱᴏᴜʟꜱ!`),
-                            mentions: mentions
+                            text: fancy(`⚠️ ꜱᴄᴀᴍ ᴀʟᴇʀᴛ!\n@${sender.split('@')[0]} sent suspicious message`),
+                            mentions: [sender]
                         });
                     }
                     
@@ -423,14 +412,7 @@ module.exports = async (conn, m) => {
             if (groupData.settings.antiporn && body && config.pornWords.some(w => body.toLowerCase().includes(w))) {
                 try {
                     await conn.sendMessage(from, { delete: msg.key });
-                    
-                    await conn.sendMessage(from, { 
-                        text: fancy(`🚫 ᴀɴᴛɪᴘᴏʀɴ\n@${sender.split('@')[0]} sent adult content\nMessage deleted`),
-                        mentions: [sender]
-                    });
-                    
                     await conn.groupParticipantsUpdate(from, [sender], "remove");
-                    
                     return;
                 } catch (error) {
                     console.error("Antiporn error:", error);
@@ -441,15 +423,9 @@ module.exports = async (conn, m) => {
             if (groupData.settings.antitag) {
                 const mentionedCount = msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.length || 0;
                 
-                if (body?.includes('@everyone') || body?.includes('@all') || mentionedCount > 5) {
+                if ((body?.includes('@everyone') || body?.includes('@all') || mentionedCount > 5) && !isOwner) {
                     try {
                         await conn.sendMessage(from, { delete: msg.key });
-                        
-                        await conn.sendMessage(from, { 
-                            text: fancy(`⚠️ ᴀɴᴛɪᴛᴀɢ\n@${sender.split('@')[0]} excessive tagging detected`),
-                            mentions: [sender]
-                        });
-                        
                         return;
                     } catch (error) {
                         console.error("Antitag error:", error);
@@ -458,7 +434,7 @@ module.exports = async (conn, m) => {
             }
 
             // ANTI-MEDIA
-            if (groupData.settings.antimedia !== 'off') {
+            if (groupData.settings.antimedia !== 'off' && !isOwner) {
                 const mediaTypes = {
                     'imageMessage': 'photo',
                     'videoMessage': 'video',
@@ -471,12 +447,6 @@ module.exports = async (conn, m) => {
                     (groupData.settings.antimedia === 'all' || groupData.settings.antimedia === mediaTypes[type])) {
                     try {
                         await conn.sendMessage(from, { delete: msg.key });
-                        
-                        await conn.sendMessage(from, { 
-                            text: fancy(`🚫 ᴀɴᴛɪᴍᴇᴅɪᴀ\n@${sender.split('@')[0]} ${mediaTypes[type]} not allowed`),
-                            mentions: [sender]
-                        });
-                        
                         return;
                     } catch (error) {
                         console.error("Antimedia error:", error);
@@ -485,7 +455,7 @@ module.exports = async (conn, m) => {
             }
         }
 
-        // AI CHATBOT - FIXED FORWARDED MESSAGE
+        // AI CHATBOT
         if (config.chatbot && !isCmd && !msg.key.fromMe && body && body.trim().length > 1) {
             if (config.autoTyping) {
                 try {
@@ -528,7 +498,6 @@ module.exports = async (conn, m) => {
 
         // COMMAND HANDLING
         if (isCmd) {
-            // 30. FORWARDED MESSAGE FROM CHANNEL FOR ALL COMMANDS
             const forwardedMsg = {
                 contextInfo: {
                     isForwarded: true,
