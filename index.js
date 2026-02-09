@@ -1,4 +1,4 @@
- const {
+const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
@@ -85,7 +85,6 @@ app.get('/api/features', async (req, res) => {
                 downloadStatus: settings.downloadStatus,
                 antispam: settings.antispam,
                 antibug: settings.antibug
-                // BUG FEATURE REMOVED
             }
         });
     } catch (error) {
@@ -274,6 +273,27 @@ async function startInsidious() {
             const metadata = await conn.groupMetadata(anu.id);
             const participants = anu.participants;
             
+            // Get group description and profile picture
+            let groupDesc = "No description available";
+            let groupPicture = null;
+            
+            try {
+                // Try to get group description
+                if (metadata.desc) {
+                    groupDesc = metadata.desc.substring(0, 100);
+                    if (metadata.desc.length > 100) groupDesc += "...";
+                }
+                
+                // Try to get group profile picture
+                try {
+                    groupPicture = await conn.profilePictureUrl(anu.id, 'image');
+                } catch (picError) {
+                    console.log("No group picture available for:", metadata.subject);
+                }
+            } catch (e) {
+                console.error("Error fetching group info:", e);
+            }
+            
             for (let num of participants) {
                 let quote = "Welcome to the Further.";
                 try {
@@ -282,15 +302,24 @@ async function startInsidious() {
                 } catch (e) {}
 
                 if (anu.action == 'add') {
-                    const welcomeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ɴᴇᴡ ꜱᴏᴜʟ ᴅᴇᴛᴇᴄᴛᴇᴅ")}\n╰── • 🥀 • ──╯\n\n│ ◦ Welcome @${num.split("@")[0]}\n│ ◦ Group: ${metadata.subject}\n│ ◦ Members: ${metadata.participants.length}\n\n🥀 "${fancy(quote)}"\n\n${fancy(config.footer)}`;
+                    const welcomeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ɴᴇᴡ ꜱᴏᴜʟ ᴅᴇᴛᴇᴄᴛᴇᴅ")}\n╰── • 🥀 • ──╯\n\n📛 *Group:* ${metadata.subject}\n👥 *Members:* ${metadata.participants.length}\n📝 *Description:* ${groupDesc}\n\n│ ◦ Welcome @${num.split("@")[0]}\n\n🥀 "${fancy(quote)}"\n\n${fancy(config.footer)}`;
                     
-                    await conn.sendMessage(anu.id, { 
-                        text: welcomeMsg,
-                        mentions: [num] 
-                    });
+                    // Send with group picture if available
+                    if (groupPicture) {
+                        await conn.sendMessage(anu.id, {
+                            image: { url: groupPicture },
+                            caption: welcomeMsg,
+                            mentions: [num]
+                        });
+                    } else {
+                        await conn.sendMessage(anu.id, { 
+                            text: welcomeMsg,
+                            mentions: [num] 
+                        });
+                    }
                     
                 } else if (anu.action == 'remove') {
-                    const goodbyeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ꜱᴏᴜʟ ʟᴇꜰᴛ")}\n╰── • 🥀 • ──╯\n\n│ ◦ @${num.split('@')[0]} ʜᴀꜱ ᴇxɪᴛᴇᴅ.\n🥀 "${fancy(quote)}"`;
+                    const goodbyeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ꜱᴏᴜʟ ʟᴇꜰᴛ")}\n╰── • 🥀 • ──╯\n\n📛 *Group:* ${metadata.subject}\n👥 *Members:* ${metadata.participants.length}\n📝 *Description:* ${groupDesc}\n\n│ ◦ @${num.split('@')[0]} ʜᴀꜱ ᴇxɪᴛᴇᴅ.\n\n🥀 "${fancy(quote)}"`;
                     await conn.sendMessage(anu.id, { 
                         text: goodbyeMsg,
                         mentions: [num] 
@@ -359,9 +388,40 @@ async function startInsidious() {
         });
     }
 
-    // AUTO BIO
+    // AUTO BIO - FIXED AND WORKING
     if (config.autoBio) {
+        console.log(fancy("🔄 Auto Bio feature activated"));
+        
         setInterval(async () => {
+            try {
+                const settings = await Settings.findOne();
+                if (!settings?.autoBio) {
+                    console.log("Auto Bio is disabled in settings");
+                    return;
+                }
+                
+                // Get bot uptime
+                const uptime = process.uptime();
+                const days = Math.floor(uptime / 86400);
+                const hours = Math.floor((uptime % 86400) / 3600);
+                const minutes = Math.floor((uptime % 3600) / 60);
+                
+                // Create dynamic bio
+                const bioText = `🤖 ${config.botName || "Insidious"} | ⚡ ${days}d ${hours}h ${minutes}m | 👑 ${config.ownerName || "Owner"}`;
+                
+                // Update profile status
+                await conn.updateProfileStatus(bioText);
+                
+                console.log(fancy(`📝 Bio updated: ${bioText}`));
+                
+            } catch (error) {
+                console.error("❌ Auto bio error:", error);
+                // Don't stop the interval on error
+            }
+        }, 60000); // Update every 60 seconds
+        
+        // Also run immediately on start
+        setTimeout(async () => {
             try {
                 const settings = await Settings.findOne();
                 if (!settings?.autoBio) return;
@@ -371,12 +431,14 @@ async function startInsidious() {
                 const hours = Math.floor((uptime % 86400) / 3600);
                 const minutes = Math.floor((uptime % 3600) / 60);
                 
-                const bio = `🤖 ${config.botName} | ⚡${days}d ${hours}h ${minutes}m | 👑${config.ownerName}`;
-                await conn.updateProfileStatus(bio);
+                const bioText = `🤖 ${config.botName || "Insidious"} | ⚡ ${days}d ${hours}h ${minutes}m | 👑 ${config.ownerName || "Owner"}`;
+                
+                await conn.updateProfileStatus(bioText);
+                console.log(fancy(`📝 Initial bio set: ${bioText}`));
             } catch (error) {
-                console.error("Auto bio error:", error);
+                console.error("❌ Initial auto bio error:", error);
             }
-        }, 60000);
+        }, 10000); // Run after 10 seconds
     }
 
     return conn;
@@ -387,3 +449,5 @@ startInsidious().catch(console.error);
 
 // Start web server
 app.listen(PORT, () => console.log(`🌐 Dashboard running on port ${PORT}`));
+
+module.exports = { startInsidious, globalConn };
