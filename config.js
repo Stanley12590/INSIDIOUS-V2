@@ -25,7 +25,7 @@ module.exports = {
     // ============================================
     // DATABASE
     // ============================================
-    mongodbUri: getConfig('MONGODB_URI', "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority"),
+    mongodbUri: getConfig('MONGODB_URI', "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/"),
     sessionName: getConfig('SESSION_NAME', "insidious_session"),
 
     // ============================================
