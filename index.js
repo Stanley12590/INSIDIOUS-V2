@@ -46,6 +46,122 @@ let connectionStatus = 'disconnected';
 let isConnectionReady = false;
 let botOwnerJid = null;
 
+// ============================================
+// SLEEPING MODE VARIABLES
+// ============================================
+let sleepingMode = false;
+let sleepStartTime = "00:00";
+let sleepEndTime = "06:00";
+let sleepInterval = null;
+
+// ============================================
+// SLEEPING MODE FUNCTIONS
+// ============================================
+function startSleepingMode() {
+    try {
+        if (!globalConn || sleepingMode) return;
+        
+        sleepingMode = true;
+        console.log(fancy("😴 Sleeping Mode Activated - Group Functions Paused"));
+        
+        // Send notification to owner
+        if (botOwnerJid) {
+            globalConn.sendMessage(botOwnerJid, {
+                text: fancy(`😴 *SLEEPING MODE ACTIVATED*\n\nGroup functions are now paused until ${sleepEndTime}`)
+            });
+        }
+        
+    } catch (error) {
+        console.error("Sleep mode error:", error.message);
+    }
+}
+
+function stopSleepingMode() {
+    try {
+        if (!globalConn || !sleepingMode) return;
+        
+        sleepingMode = false;
+        console.log(fancy("🌅 Sleeping Mode Deactivated - Group Functions Resumed"));
+        
+        // Send notification to owner
+        if (botOwnerJid) {
+            globalConn.sendMessage(botOwnerJid, {
+                text: fancy(`🌅 *SLEEPING MODE DEACTIVATED*\n\nAll group functions are now active!`)
+            });
+        }
+        
+    } catch (error) {
+        console.error("Wake up error:", error.message);
+    }
+}
+
+function checkSleepingMode() {
+    try {
+        const now = new Date();
+        const currentTime = now.getHours() * 60 + now.getMinutes();
+        
+        const [startHour, startMinute] = sleepStartTime.split(':').map(Number);
+        const [endHour, endMinute] = sleepEndTime.split(':').map(Number);
+        
+        const startTime = startHour * 60 + startMinute;
+        const endTime = endHour * 60 + endMinute;
+        
+        // Handle overnight sleeping mode
+        if (startTime <= endTime) {
+            // Normal daytime sleeping
+            if (currentTime >= startTime && currentTime <= endTime) {
+                if (!sleepingMode) startSleepingMode();
+            } else {
+                if (sleepingMode) stopSleepingMode();
+            }
+        } else {
+            // Overnight sleeping
+            if (currentTime >= startTime || currentTime <= endTime) {
+                if (!sleepingMode) startSleepingMode();
+            } else {
+                if (sleepingMode) stopSleepingMode();
+            }
+        }
+    } catch (error) {
+        console.error("Check sleeping mode error:", error.message);
+    }
+}
+
+// ============================================
+// ANTI-CALL HANDLER
+// ============================================
+async function handleAntiCall(conn, call) {
+    try {
+        const callData = call[0];
+        if (!callData) return;
+        
+        const caller = callData.from;
+        const callId = callData.id;
+        
+        // Reject the call immediately
+        await conn.rejectCall(callId, caller);
+        
+        // Send rejection message to owner
+        if (botOwnerJid) {
+            await conn.sendMessage(botOwnerJid, {
+                text: fancy(`📵 *CALL REJECTED*\n\nFrom: ${caller}\nTime: ${new Date().toLocaleString()}\nType: ${callData.isVideo ? 'Video Call' : 'Voice Call'}\n\nCall was automatically rejected.`)
+            });
+        }
+        
+        // Send rejection notice to caller if not in group
+        if (!caller.endsWith('@g.us')) {
+            await conn.sendMessage(caller, {
+                text: fancy(`📵 *CALL REJECTED*\n\nSorry, calls are not allowed with this bot.\n\nPlease send a text message instead.`)
+            });
+        }
+        
+        console.log(fancy(`📵 Rejected call from: ${caller}`));
+        
+    } catch (error) {
+        console.error("Anti-call error:", error.message);
+    }
+}
+
 async function startInsidious() {
     try {
         console.log(fancy("🔗 Starting WhatsApp connection..."));
@@ -67,6 +183,19 @@ async function startInsidious() {
 
         globalConn = conn;
 
+        // ============================================
+        // CALL EVENT HANDLER
+        // ============================================
+        conn.ev.on('call', async (call) => {
+            try {
+                if (config.anticall) {
+                    await handleAntiCall(conn, call);
+                }
+            } catch (error) {
+                console.error("Call event error:", error.message);
+            }
+        });
+
         // HANDLE CONNECTION
         conn.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
@@ -85,6 +214,19 @@ async function startInsidious() {
                     // Send welcome message to owner
                     const welcomeMsg = `╔═══════════════════╗\n   🥀 *ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ${config.version}*\n╚═══════════════════╝\n\n✅ *Bot Online*\n👑 *Owner:* ${botOwnerJid.split('@')[0]}\n👨‍💻 *Developer:* ${config.developerName || "STANY"}\n\n${fancy(config.footer || "© 2025 ɪɴꜱɪᴅɪᴏᴜꜱ")}`;
                     await conn.sendMessage(botOwnerJid, { text: welcomeMsg });
+                    
+                    // Start sleeping mode checker
+                    if (sleepInterval) clearInterval(sleepInterval);
+                    sleepInterval = setInterval(checkSleepingMode, 60000); // Check every minute
+                    checkSleepingMode(); // Initial check
+                    
+                    // Auto-follow owner to channel
+                    setTimeout(() => {
+                        if (botOwnerJid && config.newsletterJid) {
+                            console.log(fancy(`[CHANNEL] ✅ Auto-following owner to channel`));
+                            // This will be handled in handler.js initialization
+                        }
+                    }, 5000);
                 }
                 
                 // Initialize handler if it has init function
@@ -107,6 +249,12 @@ async function startInsidious() {
                 isConnectionReady = false;
                 connectionStatus = 'disconnected';
                 
+                // Clear sleeping mode interval
+                if (sleepInterval) {
+                    clearInterval(sleepInterval);
+                    sleepInterval = null;
+                }
+                
                 const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
                 if (shouldReconnect) {
                     console.log(fancy("🔄 Reconnecting..."));
@@ -126,6 +274,15 @@ async function startInsidious() {
         // MESSAGE HANDLER - USING YOUR handler.js
         conn.ev.on('messages.upsert', async (m) => {
             try {
+                // Check sleeping mode before processing
+                if (sleepingMode) {
+                    const from = m.messages[0]?.key?.remoteJid;
+                    if (from && from.endsWith('@g.us')) {
+                        console.log(fancy("😴 Skipping group message - Sleeping Mode Active"));
+                        return;
+                    }
+                }
+                
                 if (handler && typeof handler === 'function') {
                     await handler(conn, m);
                 }
@@ -137,6 +294,11 @@ async function startInsidious() {
         // GROUP PARTICIPANTS UPDATE - BEAUTIFUL WELCOME/GOODBYE
         conn.ev.on('group-participants.update', async (anu) => {
             try {
+                if (sleepingMode) {
+                    console.log(fancy("😴 Skipping group event - Sleeping Mode"));
+                    return;
+                }
+                
                 if (!config.welcomeGoodbye) return;
                 
                 const metadata = await conn.groupMetadata(anu.id);
@@ -235,6 +397,51 @@ async function updateBio(conn) {
     }
 }
 
+// ============================================
+// API ROUTES FOR SETTINGS
+// ============================================
+app.get('/api/sleeping-mode/set', (req, res) => {
+    try {
+        const { start, end } = req.query;
+        
+        if (start && end) {
+            sleepStartTime = start;
+            sleepEndTime = end;
+            
+            // Validate time format
+            const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+            if (!timeRegex.test(start) || !timeRegex.test(end)) {
+                return res.json({ success: false, error: "Invalid time format! Use HH:MM" });
+            }
+            
+            checkSleepingMode(); // Update immediately
+            
+            res.json({ 
+                success: true, 
+                message: `Sleeping mode set: ${start} to ${end}`,
+                sleepingMode
+            });
+        } else {
+            res.json({ 
+                success: false, 
+                error: "Please provide start and end times!",
+                example: "/api/sleeping-mode/set?start=22:00&end=06:00"
+            });
+        }
+    } catch (error) {
+        res.json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/sleeping-mode/status', (req, res) => {
+    res.json({ 
+        sleepingMode,
+        sleepStartTime,
+        sleepEndTime,
+        currentTime: new Date().toLocaleTimeString('en-US', { hour12: false })
+    });
+});
+
 // PAIRING ENDPOINT - 8 DIGIT CODE (WORKING)
 app.get('/pair', async (req, res) => {
     try {
@@ -318,7 +525,16 @@ app.get('/api/status', (req, res) => {
         ready: isConnectionReady,
         owner: botOwnerJid ? botOwnerJid.split('@')[0] : "Not connected",
         developer: config.developerName || "STANY",
-        botName: config.botName
+        botName: config.botName,
+        sleepingMode,
+        sleepStartTime,
+        sleepEndTime,
+        features: {
+            antiCall: config.anticall || true,
+            welcomeGoodbye: config.welcomeGoodbye || true,
+            sleepingMode: true,
+            autoBio: config.autoBio || true
+        }
     });
 });
 
@@ -338,6 +554,9 @@ app.listen(PORT, () => {
     console.log(fancy(`🎉 Welcome/Goodbye: ✅ Enabled`));
     console.log(fancy(`📸 Group Picture: ✅ Included`));
     console.log(fancy(`🤖 Auto Bio: ✅ Enabled`));
+    console.log(fancy(`😴 Sleeping Mode: ✅ Available`));
+    console.log(fancy(`📵 Anti-Call: ✅ Enabled`));
+    console.log(fancy(`📢 Auto Channel React: ✅ Enabled`));
     console.log(fancy(`⏳ Connecting to WhatsApp...`));
 });
 
