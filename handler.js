@@ -21,7 +21,7 @@ function fancy(text) {
     }
 }
 
-// ✅ **LOAD DATABASE MODELS - SIMPLIFIED**
+// ✅ **LOAD DATABASE MODELS - FIXED**
 let User, Group, Settings;
 try {
     const models = require('./database/models');
@@ -124,7 +124,7 @@ async function isUserAdmin(conn, groupJid, userJid) {
     }
 }
 
-// ✅ **CREATE REPLY FUNCTION (FIXED)**
+// ✅ **CREATE REPLY FUNCTION (IMPROVED)**
 function createReply(conn, from, msg) {
     const replyFn = async function(text, options = {}) {
         try {
@@ -439,7 +439,7 @@ async function getAIResponse(userMessage) {
 }
 
 // ============================================
-// 6. COMMAND HANDLER - COMPLETELY FIXED FOR YOUR STRUCTURE
+// 6. COMMAND HANDLER - COMPLETELY FIXED!
 // ============================================
 
 async function loadCommand(command, conn, from, msg, args, sender, pushname, isGroup) {
@@ -500,31 +500,26 @@ async function loadCommand(command, conn, from, msg, args, sender, pushname, isG
             }
         }
         
-        // ✅ **PREPARE EXECUTION PARAMETERS FOR YOUR COMMAND STRUCTURE**
-        // Commands zako zinatumia: (conn, msg, args, { from, fancy, isOwner, config, etc })
-        const commandParams = {
-            from,          // Chat JID
-            fancy,         // Fancy text function
-            isOwner,       // Boolean if sender is owner
-            config,        // Config object
-            pushname,      // Sender's push name
-            isGroup,       // Boolean if group chat
-            sender,        // Sender JID
-            conn,          // Connection object
-            msg,           // Message object
-            args,          // Command arguments
-            reply: async (text, options = {}) => {
-                return await conn.sendMessage(from, { text, ...options }, { quoted: msg });
-            }
-        };
-        
         // ✅ **EXECUTE COMMAND WITH CORRECT PARAMETERS**
         try {
             if (typeof cmdModule.execute === 'function') {
-                // Tumia parameters kama command yako inavyotaka
-                await cmdModule.execute(conn, msg, args, commandParams);
+                // ✅ **HERE IS THE FIX: Pass parameters in the correct format**
+                // Commands zako zinatumia: (conn, msg, args, { from, fancy, config, isOwner, etc })
+                const params = {
+                    from,      // Chat JID
+                    fancy,     // Fancy function
+                    config,    // Config object
+                    isOwner,   // Boolean if owner
+                    pushname,  // Sender name
+                    isGroup,   // Boolean if group
+                    sender,    // Sender JID
+                    reply      // Reply function
+                };
+                
+                await cmdModule.execute(conn, msg, args, params);
             } else if (typeof cmdModule === 'function') {
-                await cmdModule(conn, msg, args, commandParams);
+                // For direct function commands
+                await cmdModule(conn, msg, args);
             } else {
                 await reply(`❌ Invalid command format in ${command}`);
             }
@@ -754,10 +749,10 @@ module.exports.init = async (conn) => {
 };
 
 // ============================================
-// 10. COMMAND RELOAD FUNCTION (OPTIONAL)
+// 10. COMMAND RELOAD FUNCTION
 // ============================================
 
-module.exports.reloadCommand = async (conn, commandName) => {
+module.exports.reloadCommand = async (commandName) => {
     try {
         const commandsPath = path.join(__dirname, 'commands');
         if (!fs.existsSync(commandsPath)) return false;
