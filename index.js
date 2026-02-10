@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3000;
 
 // DATABASE CONNECTION - SILENT MODE
 console.log(fancy("🔗 Connecting to database..."));
-const MONGODB_URI = "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
 
 mongoose.connect(MONGODB_URI, {
     useNewUrlParser: true,
@@ -51,16 +51,22 @@ app.get('/api/stats', async (req, res) => {
         const settings = await Settings.findOne();
         
         res.json({
+            success: true,
             users,
             groups,
             subscribers,
             settings: settings || {},
             uptime: process.uptime(),
             version: config.version || "2.1.1",
-            botName: config.botName || "Insidious"
+            botName: config.botName || "INSIDIOUS"
         });
     } catch (error) {
-        res.json({ error: "Database not available", stats: { users: 0, groups: 0, subscribers: 0 } });
+        console.error("Stats error:", error);
+        res.json({ 
+            success: false, 
+            error: "Database not available", 
+            stats: { users: 0, groups: 0, subscribers: 0 } 
+        });
     }
 });
 
@@ -69,33 +75,35 @@ app.get('/api/features', async (req, res) => {
         const { Settings } = require('./database/models');
         const settings = await Settings.findOne() || {};
         res.json({
+            success: true,
             features: {
-                antilink: settings.antilink || config.antilink || true,
-                antiporn: settings.antiporn || config.antiporn || true,
-                antiscam: settings.antiscam || config.antiscam || true,
-                antimedia: settings.antimedia || config.antimedia || false,
-                antitag: settings.antitag || config.antitag || true,
-                antiviewonce: settings.antiviewonce || config.antiviewonce || true,
-                antidelete: settings.antidelete || config.antidelete || true,
-                sleepingMode: settings.sleepingMode || config.sleepingMode || false,
-                welcomeGoodbye: settings.welcomeGoodbye || config.welcomeGoodbye || true,
-                activeMembers: settings.activeMembers || config.activeMembers || false,
-                autoblockCountry: settings.autoblockCountry || config.autoblockCountry || false,
-                chatbot: settings.chatbot || config.chatbot || true,
-                autoStatus: settings.autoStatus || config.autoStatus || true,
-                autoRead: settings.autoRead || config.autoRead || true,
-                autoReact: settings.autoReact || config.autoReact || true,
-                autoSave: settings.autoSave || config.autoSave || false,
-                autoBio: settings.autoBio || config.autoBio || true,
-                anticall: settings.anticall || config.anticall || true,
-                downloadStatus: settings.downloadStatus || config.downloadStatus || false,
-                antispam: settings.antispam || config.antispam || true,
-                antibug: settings.antibug || config.antibug || true,
-                autoStatusReply: settings.autoStatusReply || config.autoStatusReply || true
+                antilink: settings.antilink !== undefined ? settings.antilink : true,
+                antiporn: settings.antiporn !== undefined ? settings.antiporn : true,
+                antiscam: settings.antiscam !== undefined ? settings.antiscam : true,
+                antimedia: settings.antimedia !== undefined ? settings.antimedia : false,
+                antitag: settings.antitag !== undefined ? settings.antitag : true,
+                antiviewonce: settings.antiviewonce !== undefined ? settings.antiviewonce : true,
+                antidelete: settings.antidelete !== undefined ? settings.antidelete : true,
+                sleepingMode: settings.sleepingMode !== undefined ? settings.sleepingMode : false,
+                welcomeGoodbye: settings.welcomeGoodbye !== undefined ? settings.welcomeGoodbye : true,
+                activeMembers: settings.activeMembers !== undefined ? settings.activeMembers : false,
+                autoblockCountry: settings.autoblockCountry !== undefined ? settings.autoblockCountry : false,
+                chatbot: settings.chatbot !== undefined ? settings.chatbot : true,
+                autoStatus: settings.autoStatus !== undefined ? settings.autoStatus : true,
+                autoRead: settings.autoRead !== undefined ? settings.autoRead : true,
+                autoReact: settings.autoReact !== undefined ? settings.autoReact : true,
+                autoSave: settings.autoSave !== undefined ? settings.autoSave : false,
+                autoBio: settings.autoBio !== undefined ? settings.autoBio : true,
+                anticall: settings.anticall !== undefined ? settings.anticall : true,
+                downloadStatus: settings.downloadStatus !== undefined ? settings.downloadStatus : false,
+                antispam: settings.antispam !== undefined ? settings.antispam : true,
+                antibug: settings.antibug !== undefined ? settings.antibug : true,
+                autoStatusReply: settings.autoStatusReply !== undefined ? settings.autoStatusReply : true
             }
         });
     } catch (error) {
-        res.json({ error: "Settings not available", features: {} });
+        console.error("Features error:", error);
+        res.json({ success: false, error: "Settings not available", features: {} });
     }
 });
 
@@ -109,19 +117,30 @@ app.post('/api/settings', async (req, res) => {
             settings = new Settings();
         }
         
+        // Convert value to boolean if needed
+        let finalValue = value;
+        if (value === 'true' || value === 'false') {
+            finalValue = value === 'true';
+        } else if (value === 'on' || value === 'off') {
+            finalValue = value === 'on';
+        }
+        
         if (settings[feature] !== undefined) {
-            settings[feature] = value;
+            settings[feature] = finalValue;
+            settings.updatedAt = new Date();
             await settings.save();
             res.json({ success: true, message: `${feature} updated to ${value}` });
         } else {
             res.json({ success: false, message: `Feature ${feature} not found` });
         }
     } catch (error) {
-        res.json({ error: error.message });
+        console.error("Settings update error:", error);
+        res.json({ success: false, error: error.message });
     }
 });
 
 let globalConn = null;
+let qrCode = null;
 
 async function start() {
     try {
@@ -146,11 +165,37 @@ async function start() {
         conn.ev.on('connection.update', async (update) => {
             const { connection, qr } = update;
             
+            // Handle QR Code
+            if (qr) {
+                qrCode = qr;
+                console.log(fancy("📱 QR Code generated"));
+                
+                // Display QR in console without using printQRInTerminal
+                const qrTerminal = require("qrcode-terminal");
+                qrTerminal.generate(qr, { small: true });
+            }
+            
             if (connection === 'open') {
                 console.log(fancy("👹 INSIDIOUS V2.1.1 ACTIVATED"));
                 console.log(fancy("✅ Bot is now online"));
                 
-                // SIMPLE CONNECTION MESSAGE TO OWNER
+                // Save session to database
+                try {
+                    const { User } = require('./database/models');
+                    const botUser = await User.findOne({ jid: conn.user.id });
+                    if (!botUser) {
+                        await new User({
+                            jid: conn.user.id,
+                            name: conn.user.name,
+                            isActive: true,
+                            linkedAt: new Date()
+                        }).save();
+                    }
+                } catch (e) {
+                    console.log("Session save error:", e.message);
+                }
+                
+                // CONNECTION MESSAGE TO OWNER
                 try {
                     const uniqueEmoji = ["👑", "🌟", "✨", "⚡", "🔥", "💫"];
                     const randomEmoji = uniqueEmoji[Math.floor(Math.random() * uniqueEmoji.length)];
@@ -163,6 +208,7 @@ async function start() {
 ✅ *Bot Connected Successfully!*
 ${randomEmoji} Session: Active
 👤 User: ${conn.user?.name || "Insidious"}
+🆔 ID: ${conn.user?.id?.split(':')[0] || "Unknown"}
 🕐 Time: ${new Date().toLocaleTimeString()}
 
 ⚙️ *Features Ready:*
@@ -175,8 +221,8 @@ ${randomEmoji} Session: Active
 ${fancy("Ready with love & feelings... ❤️")}`;
                     
                     // Send to bot owner
-                    if (config.ownerNumber) {
-                        const ownerJid = config.ownerNumber + '@s.whatsapp.net';
+                    if (config.ownerNumber && config.ownerNumber.length > 0) {
+                        const ownerJid = config.ownerNumber[0] + '@s.whatsapp.net';
                         await conn.sendMessage(ownerJid, { text: connectionMsg });
                     }
                     
@@ -206,7 +252,7 @@ ${fancy("Ready with love & feelings... ❤️")}`;
             }
         });
 
-        // PAIRING ENDPOINT
+        // PAIRING ENDPOINT - ALLOWS MULTIPLE PAIRING
         app.get('/pair', async (req, res) => {
             try {
                 let num = req.query.num;
@@ -231,7 +277,26 @@ ${fancy("Ready with love & feelings... ❤️")}`;
                 
             } catch (err) {
                 console.error("Pairing error:", err.message);
-                res.json({ error: "Failed: " + err.message });
+                
+                // Check if it's a duplicate pairing error
+                if (err.message.includes("already paired") || err.message.includes("duplicate")) {
+                    res.json({ 
+                        success: true, 
+                        message: "Number already paired with bot",
+                        alreadyPaired: true 
+                    });
+                } else {
+                    res.json({ success: false, error: "Failed: " + err.message });
+                }
+            }
+        });
+
+        // QR CODE ENDPOINT
+        app.get('/qr', async (req, res) => {
+            if (qrCode) {
+                res.json({ success: true, qr: qrCode });
+            } else {
+                res.json({ success: false, message: "No QR available. Bot might be connected." });
             }
         });
 
@@ -264,6 +329,17 @@ start();
 // START SERVER
 app.listen(PORT, () => {
     console.log(fancy(`🌐 Web Interface: http://localhost:${PORT}`));
+    console.log(fancy(`🔗 Pairing Endpoint: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
 });
+
+// Keep alive for render
+const keepAlive = () => {
+    const http = require('http');
+    setInterval(() => {
+        http.get(`http://localhost:${PORT}`);
+    }, 300000); // Ping every 5 minutes
+};
+
+keepAlive();
 
 module.exports = app;
