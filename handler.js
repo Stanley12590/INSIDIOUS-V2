@@ -439,14 +439,14 @@ async function getAIResponse(userMessage) {
 }
 
 // ============================================
-// 6. COMMAND HANDLER - FIXED (ANY LINKED NUMBER IS OWNER)
+// 6. COMMAND HANDLER - COMPLETELY FIXED FOR YOUR STRUCTURE
 // ============================================
 
 async function loadCommand(command, conn, from, msg, args, sender, pushname, isGroup) {
     try {
         const reply = createReply(conn, from, msg);
         
-        // ✅ **SEARCH COMMAND FILE**
+        // ✅ **SEARCH COMMAND FILE IN ALL CATEGORIES**
         const commandsPath = path.join(__dirname, 'commands');
         if (!fs.existsSync(commandsPath)) {
             await reply("❌ Commands folder not found");
@@ -456,14 +456,18 @@ async function loadCommand(command, conn, from, msg, args, sender, pushname, isG
         let commandFile = null;
         const categories = fs.readdirSync(commandsPath);
         
+        // Search in all subfolders
         for (const category of categories) {
             const categoryPath = path.join(commandsPath, category);
-            if (!fs.statSync(categoryPath).isDirectory()) continue;
             
-            const filePath = path.join(categoryPath, `${command}.js`);
-            if (fs.existsSync(filePath)) {
-                commandFile = filePath;
-                break;
+            // Check if it's a directory
+            if (fs.statSync(categoryPath).isDirectory()) {
+                // Check for command.js in this category
+                const filePath = path.join(categoryPath, `${command}.js`);
+                if (fs.existsSync(filePath)) {
+                    commandFile = filePath;
+                    break;
+                }
             }
         }
         
@@ -472,51 +476,67 @@ async function loadCommand(command, conn, from, msg, args, sender, pushname, isG
             return;
         }
         
-        // ✅ **LOAD COMMAND**
+        // ✅ **LOAD COMMAND MODULE**
         delete require.cache[require.resolve(commandFile)];
-        const cmdModule = require(commandFile);
+        let cmdModule;
+        try {
+            cmdModule = require(commandFile);
+        } catch (moduleError) {
+            console.error(`Error loading module ${commandFile}:`, moduleError);
+            await reply(`❌ Error loading command module`);
+            return;
+        }
         
-        // ✅ **CHECK IF COMMAND NEEDS ADMIN (FOR GROUPS)**
+        // ✅ **CHECK OWNER STATUS**
+        // Any linked number is considered owner
+        const isOwner = sender === conn.user?.id;
+        
+        // ✅ **CHECK ADMIN STATUS FOR GROUPS**
         if (cmdModule.adminOnly && isGroup) {
             const userAdmin = await isUserAdmin(conn, from, sender);
-            if (!userAdmin) {
+            if (!userAdmin && !isOwner) {
                 await reply("❌ This command is for group admins only!");
                 return;
             }
         }
         
-        // ✅ **PREPARE EXECUTION PARAMETERS**
-        const execParams = {
-            conn,
-            msg, // msg has .reply() method now
-            args,
-            from,
-            sender,
-            isGroup,
-            pushname,
-            reply,
-            fancy,
-            config
+        // ✅ **PREPARE EXECUTION PARAMETERS FOR YOUR COMMAND STRUCTURE**
+        // Commands zako zinatumia: (conn, msg, args, { from, fancy, isOwner, config, etc })
+        const commandParams = {
+            from,          // Chat JID
+            fancy,         // Fancy text function
+            isOwner,       // Boolean if sender is owner
+            config,        // Config object
+            pushname,      // Sender's push name
+            isGroup,       // Boolean if group chat
+            sender,        // Sender JID
+            conn,          // Connection object
+            msg,           // Message object
+            args,          // Command arguments
+            reply: async (text, options = {}) => {
+                return await conn.sendMessage(from, { text, ...options }, { quoted: msg });
+            }
         };
         
-        // ✅ **EXECUTE COMMAND**
+        // ✅ **EXECUTE COMMAND WITH CORRECT PARAMETERS**
         try {
             if (typeof cmdModule.execute === 'function') {
-                await cmdModule.execute(execParams);
+                // Tumia parameters kama command yako inavyotaka
+                await cmdModule.execute(conn, msg, args, commandParams);
             } else if (typeof cmdModule === 'function') {
-                await cmdModule(execParams);
+                await cmdModule(conn, msg, args, commandParams);
             } else {
-                await reply(`❌ Invalid command format`);
+                await reply(`❌ Invalid command format in ${command}`);
             }
         } catch (error) {
-            console.error(`Command "${command}" error:`, error);
-            await reply(`❌ Error: ${error.message}`);
+            console.error(`Command "${command}" execution error:`, error);
+            await reply(`❌ Error executing command: ${error.message}`);
         }
         
     } catch (error) {
         console.error(`Command "${command}" loading error:`, error);
         try {
-            await conn.sendMessage(from, { text: `❌ Error loading command` });
+            await conn.sendMessage(from, { text: `❌ Error loading command "${command}"` });
         } catch (e) {}
     }
 }
@@ -613,6 +633,9 @@ module.exports = async (conn, m) => {
                 const parts = cmdText.split(/ +/);
                 command = parts[0].toLowerCase();
                 args = parts.slice(1);
+                
+                // Debug log
+                console.log(fancy(`[COMMAND] ${command} by ${pushname} (${sender})`));
             }
         }
         
@@ -693,6 +716,23 @@ module.exports.init = async (conn) => {
             console.log(fancy(`🆔 ID: ${botInfo.id}`));
             console.log(fancy('👑 Any linked number can use all commands'));
             
+            // ✅ **LOAD ALL COMMANDS ON STARTUP**
+            const commandsPath = path.join(__dirname, 'commands');
+            if (fs.existsSync(commandsPath)) {
+                let totalCommands = 0;
+                const categories = fs.readdirSync(commandsPath);
+                
+                for (const category of categories) {
+                    const categoryPath = path.join(commandsPath, category);
+                    if (fs.statSync(categoryPath).isDirectory()) {
+                        const files = fs.readdirSync(categoryPath).filter(file => file.endsWith('.js'));
+                        totalCommands += files.length;
+                        console.log(fancy(`📁 ${category}: ${files.length} commands`));
+                    }
+                }
+                console.log(fancy(`📊 Total: ${totalCommands} commands loaded`));
+            }
+            
             // Set auto bio
             const settings = await Settings.findOne();
             if (settings?.autoBio) {
@@ -702,7 +742,7 @@ module.exports.init = async (conn) => {
             }
         }
         
-        console.log(fancy('[SYSTEM] ✅ All 30+ features active'));
+        console.log(fancy('[SYSTEM] ✅ All features active'));
         console.log(fancy('[SYSTEM] 🛡️ Anti Features: WORKING'));
         console.log(fancy('[SYSTEM] 🤖 AI Chatbot: ACTIVE'));
         console.log(fancy('[SYSTEM] ⚡ Auto Features: WORKING'));
@@ -710,5 +750,40 @@ module.exports.init = async (conn) => {
         
     } catch (error) {
         console.error('Init error:', error.message);
+    }
+};
+
+// ============================================
+// 10. COMMAND RELOAD FUNCTION (OPTIONAL)
+// ============================================
+
+module.exports.reloadCommand = async (conn, commandName) => {
+    try {
+        const commandsPath = path.join(__dirname, 'commands');
+        if (!fs.existsSync(commandsPath)) return false;
+        
+        let commandFile = null;
+        const categories = fs.readdirSync(commandsPath);
+        
+        for (const category of categories) {
+            const categoryPath = path.join(commandsPath, category);
+            if (fs.statSync(categoryPath).isDirectory()) {
+                const filePath = path.join(categoryPath, `${commandName}.js`);
+                if (fs.existsSync(filePath)) {
+                    commandFile = filePath;
+                    break;
+                }
+            }
+        }
+        
+        if (commandFile) {
+            delete require.cache[require.resolve(commandFile)];
+            console.log(fancy(`🔄 Command ${commandName} reloaded`));
+            return true;
+        }
+        return false;
+    } catch (error) {
+        console.error('Reload error:', error);
+        return false;
     }
 };
