@@ -39,7 +39,7 @@ try {
         autoSave: true,
         autoTyping: true,
         newsletterJid: "",
-        mongodbUri: "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious"
+        mongodbUri: "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/"
     };
 }
 
