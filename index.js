@@ -1,11 +1,11 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const mongoose = require("mongoose");
 const path = require("path");
 const fs = require('fs');
 
-// ✅ **FANCY FUNCTION - WORKING**
+// ✅ **FANCY FUNCTION**
 function fancy(text) {
     if (!text || typeof text !== 'string') return text;
     
@@ -16,8 +16,7 @@ function fancy(text) {
             s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ',
             A: 'ᴀ', B: 'ʙ', C: 'ᴄ', D: 'ᴅ', E: 'ᴇ', F: 'ꜰ', G: 'ɢ', H: 'ʜ', I: 'ɪ',
             J: 'ᴊ', K: 'ᴋ', L: 'ʟ', M: 'ᴍ', N: 'ɴ', O: 'ᴏ', P: 'ᴘ', Q: 'ǫ', R: 'ʀ',
-            S: 'ꜱ', T: 'ᴛ', U: 'ᴜ', V: 'ᴠ', W: 'ᴡ', X: 'x', Y: 'ʏ', Z: 'ᴢ',
-            0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉'
+            S: 'ꜱ', T: 'ᴛ', U: 'ᴜ', V: 'ᴠ', W: 'ᴡ', X: 'x', Y: 'ʏ', Z: 'ᴢ'
         };
         
         let result = '';
@@ -34,32 +33,22 @@ function fancy(text) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ **MONGODB CONNECTION - MUST (NO FALLBACK)**
+// ✅ **MONGODB CONNECTION - MUST**
 console.log(fancy("🔗 Connecting to MongoDB..."));
-
-// Hapa tumia connection string yako ya MongoDB
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
 
-// Connect to MongoDB - MUST (hapana memory mode)
 mongoose.connect(MONGODB_URI, {
     serverSelectionTimeoutMS: 30000,
     socketTimeoutMS: 45000,
-    maxPoolSize: 10,
-    minPoolSize: 2,
-    retryWrites: true,
-    w: 'majority'
+    maxPoolSize: 10
 })
 .then(() => {
-    console.log(fancy("✅ MongoDB Connected Successfully"));
-    console.log(fancy("📊 Database: insidious"));
-    console.log(fancy("⚡ Connection: Stable"));
+    console.log(fancy("✅ MongoDB Connected"));
 })
 .catch((err) => {
     console.log(fancy("❌ MongoDB Connection FAILED"));
-    console.log(fancy("🚨 Bot cannot start without database"));
-    console.log(fancy("🔧 Please check your MongoDB connection"));
     console.log(fancy("💡 Error: " + err.message));
-    process.exit(1); // Stop bot kama database haifanyi kazi
+    process.exit(1);
 });
 
 // ✅ **MIDDLEWARE**
@@ -80,37 +69,25 @@ app.get('/dashboard', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-// ✅ **BOT STATUS**
+// ✅ **GLOBAL VARIABLES**
 let globalConn = null;
 let isConnected = false;
 let botStartTime = Date.now();
-let totalMessages = 0;
 
 // ✅ **LOAD CONFIG**
 let config = {};
 try {
     config = require('./config');
-    console.log(fancy("📋 Config loaded successfully"));
+    console.log(fancy("📋 Config loaded"));
 } catch (error) {
-    console.log(fancy("❌ Config file not found or has errors"));
-    console.log(fancy("📁 Creating default config..."));
-    
-    // Create default config
-    const defaultConfig = `module.exports = {
-    ownerNumber: ["2557xxxxxxx"], // Weka nambari yako hapa
-    botName: "INSIDIOUS",
-    prefix: ".",
-    developerName: "STANYTZ"
-};`;
-    
-    fs.writeFileSync('./config.js', defaultConfig);
-    config = require('./config');
+    console.log(fancy("❌ Config file error"));
+    process.exit(1);
 }
 
 // ✅ **MAIN BOT FUNCTION**
 async function startBot() {
     try {
-        console.log(fancy("🚀 Starting INSIDIOUS: THE LAST KEY..."));
+        console.log(fancy("🚀 Starting INSIDIOUS..."));
         
         // ✅ **AUTHENTICATION**
         const { state, saveCreds } = await useMultiFileAuthState('insidious_session');
@@ -148,6 +125,7 @@ async function startBot() {
                 // Get bot info
                 let botName = conn.user?.name || "INSIDIOUS";
                 let botNumber = "Unknown";
+                let botId = conn.user?.id || "Unknown";
                 
                 if (conn.user?.id) {
                     botNumber = conn.user.id.split(':')[0] || "Unknown";
@@ -155,6 +133,11 @@ async function startBot() {
                 
                 console.log(fancy(`🤖 Name: ${botName}`));
                 console.log(fancy(`📞 Number: ${botNumber}`));
+                console.log(fancy(`🆔 Bot ID: ${botId}`));
+                
+                // ✅ **IMPORTANT: Show owner info**
+                console.log(fancy(`👑 Owner ID: ${botId}`));
+                console.log(fancy(`📱 Any number linked with this ID is owner`));
                 
                 // ✅ **SEND CONNECTION MESSAGE TO OWNER**
                 setTimeout(async () => {
@@ -166,44 +149,39 @@ async function startBot() {
                                 
                                 const connectionMsg = `
 ╭─── • 🥀 • ───╮
-INSIDIOUS: THE LAST KEY
+   INSIDIOUS: THE LAST KEY
 ╰─── • 🥀 • ───╯
 
 ✅ *Bot Connected Successfully!*
-👤 User: ${conn.user?.name || "Insidious"}
-🆔 ID: ${conn.user?.id?.split(':')[0] || "Unknown"}
 🤖 *Name:* ${botName}
 📞 *Number:* ${botNumber}
-🕐 *Time:* ${new Date().toLocaleTimeString()}
-📅 *Date:* ${new Date().toLocaleDateString()}
+🆔 *Bot ID:* ${botId.split(':')[0]}
+👑 *Owner ID:* ${botId}
+
 ⚡ *Status:* ONLINE & ACTIVE
 
-📊 *SYSTEM STATUS:*
-🛡️ All Anti Features: ✅ ACTIVE
-🤖 AI Chatbot: ✅ AUTO MODE
-👁️ Anti View Once: ✅ ACTIVE
-🗑️ Anti Delete: ✅ ACTIVE
-📼 Auto Recording: ✅ ACTIVE
-⌨️ Auto Typing: ✅ ACTIVE
-👀 Auto Read: ✅ ACTIVE
-❤️ Auto React: ✅ ACTIVE
-🎉 Welcome/Goodbye: ✅ ACTIVE
-📞 Anti Call: ✅ ACTIVE
-🚫 Anti Spam: ✅ ACTIVE
-🐛 Anti Bug: ✅ ACTIVE
+📊 *ALL FEATURES ACTIVE:*
+🛡️ Anti View Once: ✅
+🗑️ Anti Delete: ✅
+🤖 AI Chatbot: ✅
+⚡ Auto Typing: ✅
+📼 Auto Recording: ✅
+👀 Auto Read: ✅
+❤️ Auto React: ✅
+🎉 Welcome/Goodbye: ✅
 
-📈 *30+ Features Active*
-🎯 All systems operational... 🚀
+🔧 *Commands:* All working
+📁 *Database:* Connected
+🚀 *Performance:* Optimal
 
 👑 *Developer:* STANYTZ
-💾 *Version:* 2.1.1 | Year: 2025
-🙏 *Special Thanks:* REDTECH`;
+💾 *Version:* 2.1.1 | Year: 2025`;
                                 
                                 await conn.sendMessage(ownerJid, { text: connectionMsg });
                             }
                         }
                     } catch (e) {
-                        // Silent error
+                        // Silent
                     }
                 }, 3000);
                 
@@ -224,13 +202,10 @@ INSIDIOUS: THE LAST KEY
                 console.log(fancy("🔌 Connection closed"));
                 isConnected = false;
                 
-                // ✅ **SILENT RECONNECT - NO MESSAGES**
-                // Tuendelee tu, render atareconnect
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
                 
                 if (shouldReconnect) {
-                    // Silent reconnect after 5 seconds
                     setTimeout(() => {
                         startBot();
                     }, 5000);
@@ -238,7 +213,7 @@ INSIDIOUS: THE LAST KEY
             }
         });
 
-        // ✅ **PAIRING ENDPOINT - 8-DIGIT CODE**
+        // ✅ **PAIRING ENDPOINT**
         app.get('/pair', async (req, res) => {
             try {
                 let num = req.query.num;
@@ -277,7 +252,7 @@ INSIDIOUS: THE LAST KEY
             }
         });
 
-        // ✅ **HEALTH CHECK ENDPOINT**
+        // ✅ **HEALTH CHECK**
         app.get('/health', (req, res) => {
             const uptime = process.uptime();
             const hours = Math.floor(uptime / 3600);
@@ -287,36 +262,8 @@ INSIDIOUS: THE LAST KEY
             res.json({
                 status: 'healthy',
                 connected: isConnected,
-                botName: config.botName || "INSIDIOUS",
                 uptime: `${hours}h ${minutes}m ${seconds}s`,
-                totalMessages: totalMessages,
-                database: 'connected',
-                timestamp: new Date().toISOString()
-            });
-        });
-
-        // ✅ **BOT INFO ENDPOINT**
-        app.get('/info', (req, res) => {
-            res.json({
-                bot: {
-                    name: config.botName || "INSIDIOUS",
-                    version: "2.1.1",
-                    year: 2025,
-                    developer: config.developerName || "STANYTZ"
-                },
-                connection: {
-                    status: isConnected ? "ONLINE" : "OFFLINE",
-                    uptime: Math.floor((Date.now() - botStartTime) / 1000) + "s"
-                },
-                database: {
-                    status: "CONNECTED",
-                    type: "MongoDB"
-                },
-                features: {
-                    antiFeatures: 12,
-                    autoFeatures: 8,
-                    totalFeatures: 30
-                }
+                database: 'connected'
             });
         });
 
@@ -325,7 +272,6 @@ INSIDIOUS: THE LAST KEY
 
         // ✅ **MESSAGE HANDLER**
         conn.ev.on('messages.upsert', async (m) => {
-            totalMessages++;
             try {
                 const handler = require('./handler');
                 if (handler && typeof handler === 'function') {
@@ -348,14 +294,10 @@ INSIDIOUS: THE LAST KEY
             }
         });
 
-        console.log(fancy("==========================================="));
-        console.log(fancy("🚀 INSIDIOUS: THE LAST KEY IS READY"));
-        console.log(fancy("==========================================="));
+        console.log(fancy("🚀 Bot ready for pairing"));
         
     } catch (error) {
-        console.error(fancy("❌ Bot start error:"), error.message);
-        
-        // Silent restart after 10 seconds
+        console.error("Start error:", error.message);
         setTimeout(() => {
             startBot();
         }, 10000);
@@ -367,18 +309,12 @@ startBot();
 
 // ✅ **START SERVER**
 app.listen(PORT, () => {
-    console.log(fancy("==========================================="));
-    console.log(fancy("🌐 WEB INTERFACE IS READY"));
-    console.log(fancy("==========================================="));
-    console.log(fancy(`📊 Dashboard: http://localhost:${PORT}`));
+    console.log(fancy(`🌐 Web Interface: http://localhost:${PORT}`));
     console.log(fancy(`🔗 8-digit Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
-    console.log(fancy(`❤️ Health Check: http://localhost:${PORT}/health`));
-    console.log(fancy(`📈 Bot Info: http://localhost:${PORT}/info`));
+    console.log(fancy(`❤️ Health: http://localhost:${PORT}/health`));
     console.log(fancy("👑 Developer: STANYTZ"));
     console.log(fancy("📅 Version: 2.1.1 | Year: 2025"));
     console.log(fancy("🙏 Special Thanks: REDTECH"));
-    console.log(fancy("==========================================="));
 });
 
-// ✅ **EXPORT FOR RENDER/PM2**
 module.exports = app;
