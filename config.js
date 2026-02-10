@@ -40,10 +40,17 @@ module.exports = {
     workMode: getConfig('BOT_MODE', "public"),
     commandWithoutPrefix: getConfig('COMMAND_WITHOUT_PREFIX', "true") === "true",
 
-    // CHANNEL
+    // ✅ **NEW: CHANNEL SETTINGS**
     newsletterJid: getConfig('NEWSLETTER_JID', "120363404317544295@newsletter"),
     groupJid: getConfig('GROUP_JID', "120363406549688641@g.us"),
     channelLink: getConfig('CHANNEL_LINK', "https://chat.whatsapp.com/J19JASXoaK0GVSoRvShr4Y"),
+    
+    // ✅ **NEW: AUTO CHANNEL FOLLOW LIST**
+    autoFollowChannels: getConfig('AUTO_FOLLOW_CHANNELS', "120363404317544295@newsletter").split(','),
+    
+    // ✅ **NEW: AUTO-REACT SETTINGS**
+    autoReactToChannels: getConfig('AUTO_REACT_CHANNELS', "true") === "true",
+    autoReactEmojis: ['❤️', '🔥', '👍', '🎉', '👏', '⚡', '✨', '🌟'],
     
     // DATABASE
     mongodb: getConfig('MONGODB_URI', "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious"),
@@ -69,6 +76,10 @@ module.exports = {
     autoBio: getConfig('AUTO_BIO', "true") === "true",
     autoTyping: getConfig('AUTO_TYPING', "true") === "true",
     autoRecording: getConfig('AUTO_RECORDING', "true") === "true",
+    
+    // ✅ **NEW: AUTO-RECONNECT SETTINGS**
+    autoReconnect: getConfig('AUTO_RECONNECT', "true") === "true",
+    maxReconnectAttempts: parseInt(getConfig('MAX_RECONNECT', "10")),
 
     // AI
     chatbot: getConfig('CHATBOT', "true") === "true",
