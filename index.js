@@ -254,6 +254,6 @@ setInterval(() => {
         console.log(fancy("🔌 Attempting auto-reconnect..."));
         start();
     }
-}, 45000); // 45 seconds
+}, 45000000); // 45 seconds
 
 module.exports = app;
