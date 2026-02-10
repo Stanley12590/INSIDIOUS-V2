@@ -41,17 +41,15 @@ app.get('/dashboard', (req, res) => {
 // API ENDPOINTS
 app.get('/api/stats', async (req, res) => {
     try {
-        const { User, Group, ChannelSubscriber, Settings } = require('./database/models');
+        const { User, Group, Settings } = require('./database/models');
         const users = await User.countDocuments();
         const groups = await Group.countDocuments();
-        const subscribers = await ChannelSubscriber.countDocuments();
         const settings = await Settings.findOne();
         
         res.json({
             success: true,
             users,
             groups,
-            subscribers,
             settings: settings || {},
             uptime: process.uptime(),
             version: "2.1.1",
@@ -61,7 +59,7 @@ app.get('/api/stats', async (req, res) => {
         res.json({ 
             success: false, 
             error: "Database not available", 
-            stats: { users: 0, groups: 0, subscribers: 0 } 
+            stats: { users: 0, groups: 0 } 
         });
     }
 });
@@ -92,7 +90,7 @@ async function start() {
                 console.log(fancy("👹 INSIDIOUS V2.1.1 ACTIVATED"));
                 console.log(fancy("✅ Bot is now online"));
                 
-                // Save session to database
+                // Save session
                 try {
                     const { User } = require('./database/models');
                     const botUser = await User.findOne({ jid: conn.user.id });
@@ -106,11 +104,11 @@ async function start() {
                     }
                 } catch (e) {}
                 
-                // CONNECTION MESSAGE TO OWNER
+                // Connection message
                 try {
                     const connectionMsg = `
 ╭─── • 🥀 • ───╮
-   ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ2.1.1
+ ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ2.1.1
 ╰─── • 🥀 • ───╯
 
 ✅ *Bot Connected Successfully!*
@@ -122,13 +120,13 @@ async function start() {
 🤖 AI Chatbot: ✅
 👁️ Anti-Viewonce: ✅
 🗑️ Anti-Delete: ✅
-📱 Status AI: ✅
-💕 Human Emotions: ✅
+📱 Auto Recording: ✅
+💕 All Anti Features: ✅
 
 Ready with love & feelings... ❤️`;
                     
                     // Send to bot owner
-                    const { default: config } = await import('./config.js');
+                    const config = require('./config');
                     if (config.ownerNumber && config.ownerNumber.length > 0) {
                         const ownerJid = config.ownerNumber[0] + '@s.whatsapp.net';
                         await conn.sendMessage(ownerJid, { text: connectionMsg });
@@ -158,7 +156,7 @@ Ready with love & feelings... ❤️`;
             }
         });
 
-        // PAIRING ENDPOINT - ALLOWS MULTIPLE PAIRING
+        // PAIRING ENDPOINT
         app.get('/pair', async (req, res) => {
             try {
                 let num = req.query.num;
@@ -231,7 +229,7 @@ app.listen(PORT, () => {
     console.log(fancy(`🔗 Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
 });
 
-// Keep alive for render
+// Keep alive
 const keepAlive = () => {
     const http = require('http');
     setInterval(() => {
