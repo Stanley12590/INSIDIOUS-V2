@@ -30,20 +30,21 @@ module.exports = {
     // ============================================
     // BOT METADATA
     // ============================================
-    botName: getConfig('BOT_NAME', "ɪɴꜱɪᴅɪᴏᴜꜱ"),
-    developerName: getConfig('DEVELOPER_NAME', "STANY"),
+    botName: getConfig('BOT_NAME', "INSIDIOUS"),
+    developerName: getConfig('DEVELOPER_NAME', "STANYTZ"),
     ownerName: getConfig('BOT_OWNER', "STANY"),
-    ownerNumber: [getConfig('OWNER_NUMBER', "255000000000")],
+    ownerNumber: getConfig('OWNER_NUMBER', "255000000000").split(','),
     version: "2.1.1",
     year: "2025",
     updated: "2026",
-    specialThanks: "ʀᴇᴅᴛᴇᴄʜ",
+    specialThanks: "REDTECH",
 
     // ============================================
     // COMMAND SETTINGS
     // ============================================
     prefix: getConfig('BOT_PREFIX', "."),
     workMode: getConfig('BOT_MODE', "public"),
+    commandWithoutPrefix: getConfig('COMMAND_WITHOUT_PREFIX', "true") === "true",
 
     // ============================================
     // NEWSLETTER & GROUP BRANDING
@@ -61,54 +62,54 @@ module.exports = {
     // ============================================
     // ANTI FEATURES - ALL TRUE BY DEFAULT
     // ============================================
-    antilink: true,
-    antiporn: true,
-    antiscam: true,
-    antimedia: false,
-    antitag: true,
-    antispam: true,
-    antibug: true,
-    anticall: true,
+    antilink: getConfig('ANTILINK', "true") === "true",
+    antiporn: getConfig('ANTIPORN', "true") === "true",
+    antiscam: getConfig('ANTISCAM', "true") === "true",
+    antimedia: getConfig('ANTIMEDIA', "false") === "true",
+    antitag: getConfig('ANTITAG', "true") === "true",
+    antispam: getConfig('ANTISPAM', "true") === "true",
+    antibug: getConfig('ANTIBUG', "true") === "true",
+    anticall: getConfig('ANTICALL', "true") === "true",
 
     // ============================================
     // RECOVERY FEATURES
     // ============================================
-    antiviewonce: true,
-    antidelete: true,
+    antiviewonce: getConfig('ANTIVIEWONCE', "true") === "true",
+    antidelete: getConfig('ANTIDELETE', "true") === "true",
 
     // ============================================
     // SLEEPING MODE
     // ============================================
     sleepStart: getConfig('SLEEP_START', "22:00"),
     sleepEnd: getConfig('SLEEP_END', "06:00"),
-    sleepingMode: false,
+    sleepingMode: getConfig('SLEEPING_MODE', "false") === "true",
 
     // ============================================
     // WELCOME/GOODBYE SETTINGS
     // ============================================
-    welcomeGoodbye: true,
+    welcomeGoodbye: getConfig('WELCOME_GOODBYE', "true") === "true",
 
     // ============================================
     // AUTOMATION SETTINGS
     // ============================================
-    autoRead: true,
-    autoReact: true,
-    autoSave: true,
-    autoBio: true,
-    autoTyping: true,
+    autoRead: getConfig('AUTO_READ', "true") === "true",
+    autoReact: getConfig('AUTO_REACT', "true") === "true",
+    autoSave: getConfig('AUTO_SAVE', "false") === "true",
+    autoBio: getConfig('AUTO_BIO', "true") === "true",
+    autoTyping: getConfig('AUTO_TYPING', "true") === "true",
 
     // ============================================
     // STATUS AUTO INTERACTION
     // ============================================
-    autoStatus: true,
-    autoStatusView: true,
-    autoStatusLike: true,
-    autoStatusReply: true,
+    autoStatus: getConfig('AUTO_STATUS', "true") === "true",
+    autoStatusView: getConfig('AUTO_STATUS_VIEW', "true") === "true",
+    autoStatusLike: getConfig('AUTO_STATUS_LIKE', "true") === "true",
+    autoStatusReply: getConfig('AUTO_STATUS_REPLY', "true") === "true",
 
     // ============================================
     // AI CHATBOT - POLLINATIONS ONLY
     // ============================================
-    chatbot: false,
+    chatbot: getConfig('CHATBOT', "true") === "true",
     aiModel: "https://text.pollinations.ai/",
     
     // ============================================
@@ -121,7 +122,10 @@ module.exports = {
     // ============================================
     scamKeywords: [
         'investment', 'bitcoin', 'crypto', 'ashinde', 'zawadi', 
-        'gift card', 'telegram.me', 'pata pesa', 'ajira'
+        'gift card', 'telegram.me', 'pata pesa', 'ajira',
+        'pesa haraka', 'mtaji', 'uwekezaji', 'double money',
+        'free money', 'won money', 'won prize', 'lottery',
+        'michango', 'mikopo', 'biashara', 'forex', 'stock'
     ],
 
     // ============================================
@@ -129,14 +133,21 @@ module.exports = {
     // ============================================
     pornKeywords: [
         'porn', 'sex', 'xxx', 'ngono', 'video za kikubwa', 
-        'hentai', 'malaya', 'pussy', 'dick'
+        'hentai', 'malaya', 'pussy', 'dick', 'fuck',
+        'ass', 'boobs', 'nude', 'nudes', 'nsfw',
+        'kuma', 'mboro', 'tumbo', 'chuchu', 'mateke'
     ],
+
+    // ============================================
+    // BLOCKED COUNTRIES
+    // ============================================
+    blockedCountries: getConfig('BLOCKED_COUNTRIES', '').split(',').filter(c => c),
 
     // ============================================
     // VISUALS
     // ============================================
     menuImage: getConfig('MENU_IMAGE', "https://files.catbox.moe/irqrap.jpg"),
-    footer: getConfig('FOOTER', "© 2025 ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ2.1.1 | Developer: STANY"),
+    footer: getConfig('FOOTER', "© 2025 INSIDIOUS V2.1.1 | Developer: STANYTZ"),
     
     // ============================================
     // DEPLOYMENT SETTINGS
@@ -149,19 +160,33 @@ module.exports = {
     // CHANNEL & SUBSCRIPTION SETTINGS
     // ============================================
     channelReactions: ["❤️", "🔥", "⭐", "👍", "🎉"],
-    channelSubscription: true,
-    autoReactChannel: true,
+    channelSubscription: getConfig('CHANNEL_SUBSCRIPTION', "true") === "true",
+    autoReactChannel: getConfig('AUTO_REACT_CHANNEL', "true") === "true",
     
     // ============================================
     // NEW FEATURES
     // ============================================
-    sendWelcomeToOwner: true,
-    activeMembers: false,
-    autoblockCountry: false,
-    downloadStatus: false,
+    sendWelcomeToOwner: getConfig('SEND_WELCOME_TO_OWNER', "true") === "true",
+    activeMembers: getConfig('ACTIVE_MEMBERS', "false") === "true",
+    autoblockCountry: getConfig('AUTOBLOCK_COUNTRY', "false") === "true",
+    downloadStatus: getConfig('DOWNLOAD_STATUS', "false") === "true",
+    inactiveDays: parseInt(getConfig('INACTIVE_DAYS', 7)),
     
     // ============================================
     // ADMIN NUMBERS
     // ============================================
-    adminNumbers: []
+    adminNumbers: getConfig('ADMIN_NUMBERS', '').split(',').filter(n => n),
+
+    // ============================================
+    // SECURITY
+    // ============================================
+    maxWarnings: parseInt(getConfig('MAX_WARNINGS', 3)),
+    spamLimit: parseInt(getConfig('SPAM_LIMIT', 10)),
+
+    // ============================================
+    // API KEYS
+    // ============================================
+    quotesApi: getConfig('QUOTES_API', "https://api.quotable.io/random"),
+    weatherApi: getConfig('WEATHER_API', ""),
+    newsApi: getConfig('NEWS_API', "")
 };
