@@ -30,7 +30,7 @@ module.exports = {
     // ============================================
     // BOT METADATA
     // ============================================
-    botName: getConfig('BOT_NAME', "INSIDIOUS"),
+    botName: getConfig('BOT_NAME', "ɪɴꜱɪᴅɪᴏᴜꜱ: ᴛʜᴇ ʟᴀꜱᴛ ᴋᴇ"),
     developerName: getConfig('DEVELOPER_NAME', "STANYTZ"),
     ownerName: getConfig('BOT_OWNER', "STANY"),
     ownerNumber: getConfig('OWNER_NUMBER', "255000000000").split(','),
