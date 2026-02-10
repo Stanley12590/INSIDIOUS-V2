@@ -1,5 +1,4 @@
 const fs = require('fs');
-const path = require('path');
 
 // Load .env file manually
 let envConfig = {};
@@ -29,7 +28,7 @@ function getConfig(key, defaultValue) {
 
 module.exports = {
     // ============================================
-    // BOT METADATA - UPDATED
+    // BOT METADATA
     // ============================================
     botName: getConfig('BOT_NAME', "ɪɴꜱɪᴅɪᴏᴜꜱ"),
     developerName: getConfig('DEVELOPER_NAME', "STANY"),
@@ -72,7 +71,7 @@ module.exports = {
     anticall: true,
 
     // ============================================
-    // RECOVERY FEATURES - UPDATED
+    // RECOVERY FEATURES
     // ============================================
     antiviewonce: true,
     antidelete: true,
@@ -88,11 +87,6 @@ module.exports = {
     // WELCOME/GOODBYE SETTINGS
     // ============================================
     welcomeGoodbye: true,
-
-    // ============================================
-    // AUTOBLOCK COUNTRIES
-    // ============================================
-    blockedCountries: ['92', '212', '234'],
 
     // ============================================
     // AUTOMATION SETTINGS
@@ -112,9 +106,9 @@ module.exports = {
     autoStatusReply: true,
 
     // ============================================
-    // AI CHATBOT - POLLINATIONS
+    // AI CHATBOT - POLLINATIONS ONLY
     // ============================================
-    chatbot: true,
+    chatbot: false,
     aiModel: "https://text.pollinations.ai/",
     
     // ============================================
