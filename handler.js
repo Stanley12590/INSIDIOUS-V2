@@ -61,29 +61,19 @@ function getUsername(jid) {
     }
 }
 
-async function isBotAdmin(conn, groupJid, participantJid) {
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function isBotAdmin(conn, groupJid) {
     try {
-        if (!participantJid) {
-            participantJid = conn.user?.id;
-        }
-        if (!participantJid || !groupJid) return false;
+        if (!conn.user?.id || !groupJid) return false;
         
         const metadata = await conn.groupMetadata(groupJid);
-        const participant = metadata.participants.find(p => p.id === participantJid);
+        const participant = metadata.participants.find(p => p.id === conn.user.id);
         return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
     } catch {
         return false;
-    }
-}
-
-async function getGroupAdmins(conn, groupJid) {
-    try {
-        const metadata = await conn.groupMetadata(groupJid);
-        return metadata.participants
-            .filter(p => p.admin === 'admin' || p.admin === 'superadmin')
-            .map(p => p.id);
-    } catch {
-        return [];
     }
 }
 
@@ -473,7 +463,6 @@ async function handleAutoRecording(conn, msg, settings) {
     if (!settings.autoRecording) return;
     
     try {
-        const from = msg.key.remoteJid;
         const sender = msg.key.participant || msg.key.remoteJid;
         
         // Store message in database
@@ -514,16 +503,15 @@ async function handleGroupUpdate(conn, update) {
         const settings = await Settings.findOne();
         if (!settings?.welcomeGoodbye) return;
         
-        // Check for group participants update
-        if (update.type === 'add') {
-            const participants = update.participants || [];
+        const { id, participants, action } = update;
+        
+        if (action === 'add') {
             for (const participant of participants) {
-                await sendWelcomeMessage(conn, update.id, participant);
+                await sendWelcomeMessage(conn, id, participant);
             }
-        } else if (update.type === 'remove') {
-            const participants = update.participants || [];
+        } else if (action === 'remove') {
             for (const participant of participants) {
-                await sendGoodbyeMessage(conn, update.id, participant);
+                await sendGoodbyeMessage(conn, id, participant);
             }
         }
     } catch (error) {
@@ -541,12 +529,12 @@ async function sendWelcomeMessage(conn, groupJid, participantJid) {
         const participantName = getUsername(participantJid);
         
         const welcomeMsg = `
-🎉 *WELCOME TO ${groupMetadata.subject.toUpperCase()}!*
+🎉 *WELCOME TO ${groupMetadata.subject?.toUpperCase() || 'THE GROUP'}!*
 
 👤 New Member: @${participantName}
 🕐 Joined: ${new Date().toLocaleTimeString()}
 📝 Group Description: ${groupMetadata.desc || "No description"}
-👥 Total Members: ${groupMetadata.participants.length}
+👥 Total Members: ${groupMetadata.participants?.length || 0}
 
 Enjoy your stay! 🥳`;
         
@@ -570,7 +558,7 @@ async function sendGoodbyeMessage(conn, groupJid, participantJid) {
 
 👤 Member: @${participantName}
 🕐 Left: ${new Date().toLocaleTimeString()}
-👥 Remaining Members: ${groupMetadata.participants.length}
+👥 Remaining Members: ${groupMetadata.participants?.length || 0}
 
 We'll miss you! 😢`;
         
@@ -604,67 +592,6 @@ function isSleepingMode(settings) {
         return currentTime >= startTime && currentTime < endTime;
     } else {
         return currentTime >= startTime || currentTime < endTime;
-    }
-}
-
-// ============================================
-// ACTIVE MEMBERS TRACKING
-// ============================================
-async function trackActiveMembers(conn, msg, sender) {
-    try {
-        const settings = await Settings.findOne();
-        if (!settings?.activeMembers) return;
-        
-        const isGroup = msg.key.remoteJid.endsWith('@g.us');
-        if (!isGroup) return;
-        
-        let user = await User.findOne({ jid: sender });
-        if (!user) {
-            user = await User.create({
-                jid: sender,
-                messageCount: 1,
-                lastActive: new Date()
-            });
-        } else {
-            user.messageCount = (user.messageCount || 0) + 1;
-            user.lastActive = new Date();
-            await user.save();
-        }
-        
-        // Update group stats
-        const group = await Group.findOne({ jid: msg.key.remoteJid });
-        if (group) {
-            group.messageStats = group.messageStats || { total: 0, active: 0 };
-            group.messageStats.total = (group.messageStats.total || 0) + 1;
-            await group.save();
-        }
-        
-    } catch (error) {
-        console.error("Active members tracking error:", error.message);
-    }
-}
-
-// ============================================
-// AUTO SAVE CONTACT
-// ============================================
-async function handleAutoSave(conn, msg, settings) {
-    if (!settings.autoSave) return;
-    
-    try {
-        const sender = msg.key.participant || msg.key.remoteJid;
-        
-        // Check if contact already exists
-        const existingUser = await User.findOne({ jid: sender });
-        if (!existingUser) {
-            await User.create({
-                jid: sender,
-                name: msg.pushName || "Unknown",
-                lastActive: new Date(),
-                messageCount: 1
-            });
-        }
-    } catch (error) {
-        console.error("Auto save error:", error.message);
     }
 }
 
@@ -858,10 +785,21 @@ module.exports = async (conn, m) => {
         }
         
         // AUTO SAVE CONTACT
-        await handleAutoSave(conn, msg, settings);
-        
-        // TRACK ACTIVE MEMBERS
-        await trackActiveMembers(conn, msg, sender);
+        if (settings.autoSave) {
+            try {
+                let user = await User.findOne({ jid: sender });
+                if (!user) {
+                    await User.create({
+                        jid: sender,
+                        name: pushname,
+                        lastActive: new Date(),
+                        messageCount: 1
+                    });
+                }
+            } catch (error) {
+                console.error("Auto save error:", error.message);
+            }
+        }
         
         // CHECK ANTI FEATURES (ONLY IN GROUPS)
         if (isGroup && body) {
@@ -898,6 +836,7 @@ module.exports = async (conn, m) => {
             if (body.toLowerCase().includes(botName) || body.endsWith('?')) {
                 try {
                     await conn.sendPresenceUpdate('composing', from);
+                    await delay(1000);
                     
                     // Simple AI responses
                     const responses = [
