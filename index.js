@@ -4,7 +4,6 @@ const pino = require("pino");
 const mongoose = require("mongoose");
 const { fancy } = require("./lib/font");
 const path = require("path");
-const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -37,31 +36,10 @@ app.get('/dashboard', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-// API ENDPOINTS
-app.get('/api/stats', async (req, res) => {
-    try {
-        const { User, Group, Settings } = require('./database/models');
-        const users = await User.countDocuments();
-        const groups = await Group.countDocuments();
-        const settings = await Settings.findOne();
-        
-        res.json({
-            users,
-            groups,
-            settings: settings || {},
-            uptime: process.uptime(),
-            version: "2.1.1",
-            botName: "INSIDIOUS: THE LAST KEY"
-        });
-    } catch (error) {
-        res.json({ error: "Database not available", stats: { users: 0, groups: 0 } });
-    }
-});
-
 let globalConn = null;
 let isConnected = false;
 let reconnectCount = 0;
-const MAX_RECONNECT = 15;
+const MAX_RECONNECT = 20;
 
 async function start() {
     try {
@@ -87,27 +65,12 @@ async function start() {
             const { connection } = update;
             
             if (connection === 'open') {
-                console.log(fancy("👹 INSIDIOUS V2.1.1 ACTIVATED"));
+                console.log(fancy("👹 INSIDIOUS: THE LAST KEY ACTIVATED"));
                 console.log(fancy("✅ Bot is now online"));
                 isConnected = true;
                 reconnectCount = 0;
                 
-                // SAVE SESSION TO DATABASE
-                try {
-                    const { User } = require('./database/models');
-                    const botUser = await User.findOne({ jid: conn.user.id });
-                    if (!botUser) {
-                        await new User({
-                            jid: conn.user.id,
-                            name: conn.user.name,
-                            deviceId: conn.user.id.split(':')[0],
-                            isActive: true,
-                            linkedAt: new Date()
-                        }).save();
-                    }
-                } catch (e) {}
-                
-                // CONNECTION MESSAGE TO OWNER
+                // CONNECTION MESSAGE
                 try {
                     const config = require('./config');
                     const connectionMsg = `
@@ -119,27 +82,25 @@ async function start() {
 👤 User: ${conn.user?.name || "Insidious"}
 🆔 ID: ${conn.user?.id?.split(':')[0] || "Unknown"}
 🕐 Time: ${new Date().toLocaleTimeString()}
-📱 Device: WhatsApp Web
+🔗 Pairing: 8-digit code
 
-⚙️ *Features Active:*
-🛡️ Anti Link: ✅
-🚫 Anti Porn: ✅
-⚠️ Anti Scam: ✅
-📷 Anti Media: ✅
-#️⃣ Anti Tag: ✅
+⚙️ *30+ Features Active:*
+🛡️ All Anti Features: ✅
+🤖 AI Chatbot: ✅
 👁️ Anti View Once: ✅
 🗑️ Anti Delete: ✅
-💤 Sleeping Mode: ✅
-🎉 Welcome/Goodbye: ✅
-🤖 AI Chatbot: ✅
+📼 Auto Recording: ✅
+⌨️ Auto Typing: ✅
 👀 Auto Read: ✅
 ❤️ Auto React: ✅
-📼 Auto Recording: ✅
+🎉 Welcome/Goodbye: ✅
 📞 Anti Call: ✅
+🚫 Anti Spam: ✅
+🐛 Anti Bug: ✅
 
-${fancy("Ready with all security features... 🔐")}`;
+${fancy("All systems operational... 🚀")}`;
                     
-                    // Send to bot owner
+                    // Send to owner
                     if (config.ownerNumber && config.ownerNumber.length > 0) {
                         const ownerJid = config.ownerNumber[0] + '@s.whatsapp.net';
                         await conn.sendMessage(ownerJid, { text: connectionMsg });
@@ -167,16 +128,14 @@ ${fancy("Ready with all security features... 🔐")}`;
                 
                 if (shouldReconnect && reconnectCount < MAX_RECONNECT) {
                     reconnectCount++;
-                    const delayTime = Math.min(2000 * reconnectCount, 20000);
+                    const delayTime = Math.min(1500 * reconnectCount, 15000);
                     console.log(fancy(`🔄 Reconnecting in ${delayTime/1000}s... (Attempt ${reconnectCount}/${MAX_RECONNECT})`));
                     setTimeout(start, delayTime);
-                } else if (reconnectCount >= MAX_RECONNECT) {
-                    console.log(fancy("❌ Max reconnection attempts reached"));
                 }
             }
         });
 
-        // PAIRING ENDPOINT - 8-DIGIT CODE ONLY
+        // PAIRING ENDPOINT - 8-DIGIT CODE
         app.get('/pair', async (req, res) => {
             try {
                 let num = req.query.num;
@@ -193,22 +152,18 @@ ${fancy("Ready with all security features... 🔐")}`;
                 
                 try {
                     const code = await conn.requestPairingCode(cleanNum);
-                    
                     res.json({ 
                         success: true, 
                         code: code,
                         message: `8-digit pairing code: ${code}`,
-                        instructions: "Open WhatsApp → Settings → Linked Devices → Link a Device → Enter 8-digit Code",
-                        validFor: "Code valid for 20 seconds",
-                        note: "Multiple devices can use the same number"
+                        instructions: "Open WhatsApp → Settings → Linked Devices → Link a Device → Enter 8-digit Code"
                     });
-                    
                 } catch (err) {
-                    if (err.message.includes("already paired") || err.message.includes("duplicate")) {
+                    if (err.message.includes("already paired")) {
                         res.json({ 
                             success: true, 
-                            message: "Number already paired with bot",
-                            note: "You can use the bot on multiple devices"
+                            message: "Number already paired",
+                            note: "Multiple devices supported"
                         });
                     } else {
                         throw err;
@@ -226,22 +181,7 @@ ${fancy("Ready with all security features... 🔐")}`;
             res.json({
                 status: 'healthy',
                 connected: isConnected,
-                uptime: process.uptime(),
-                timestamp: new Date().toISOString()
-            });
-        });
-
-        // BOT STATUS
-        app.get('/status', (req, res) => {
-            res.json({
-                connected: isConnected,
-                owner: conn.user?.id?.split(':')[0] || 'Not connected',
-                name: conn.user?.name || 'INSIDIOUS',
-                uptime: process.uptime(),
-                version: "2.1.1",
-                developer: "STANYTZ",
-                year: "2025",
-                updated: "2026"
+                uptime: process.uptime()
             });
         });
 
@@ -278,7 +218,7 @@ ${fancy("Ready with all security features... 🔐")}`;
         console.error("Start error:", error.message);
         if (reconnectCount < MAX_RECONNECT) {
             reconnectCount++;
-            const delayTime = Math.min(3000 * reconnectCount, 25000);
+            const delayTime = Math.min(2000 * reconnectCount, 20000);
             console.log(fancy(`🔄 Restarting in ${delayTime/1000}s...`));
             setTimeout(start, delayTime);
         }
@@ -293,34 +233,27 @@ app.listen(PORT, () => {
     console.log(fancy(`🌐 Web Interface: http://localhost:${PORT}`));
     console.log(fancy(`🔗 8-digit Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
     console.log(fancy(`❤️ Health: http://localhost:${PORT}/health`));
-    console.log(fancy(`📊 Status: http://localhost:${PORT}/status`));
     console.log(fancy("👑 Developer: STANYTZ"));
-    console.log(fancy("📅 Year: 2025 | Updated: 2026"));
+    console.log(fancy("📅 Version: 2.1.1 | Year: 2025"));
     console.log(fancy("🙏 Special Thanks: REDTECH"));
 });
 
-// KEEP ALIVE FOR RENDER/RAILWAY
-const keepAlive = () => {
+// KEEP ALIVE
+setInterval(() => {
     const http = require('http');
-    setInterval(() => {
-        http.get(`http://localhost:${PORT}/health`, (res) => {
-            if (res.statusCode === 200) {
-                console.log(fancy(`❤️ Keep-alive ping successful at ${new Date().toLocaleTimeString()}`));
-            }
-        }).on('error', (err) => {
-            console.log(fancy(`⚠️ Keep-alive failed: ${err.message}`));
-        });
-    }, 240000); // Every 4 minutes
-};
-
-keepAlive();
+    http.get(`http://localhost:${PORT}/health`, (res) => {
+        if (res.statusCode === 200) {
+            console.log(fancy(`❤️ Keep-alive ping successful`));
+        }
+    }).on('error', () => {});
+}, 180000); // 3 minutes
 
 // AUTO RECONNECT
 setInterval(() => {
     if (!isConnected && reconnectCount < MAX_RECONNECT) {
-        console.log(fancy("🔌 Connection lost, attempting auto-reconnect..."));
+        console.log(fancy("🔌 Attempting auto-reconnect..."));
         start();
     }
-}, 30000); // Check every 30 seconds
+}, 45000); // 45 seconds
 
 module.exports = app;
