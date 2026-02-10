@@ -1,4 +1,4 @@
- const {
+const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
@@ -85,7 +85,6 @@ app.get('/api/features', async (req, res) => {
                 downloadStatus: settings.downloadStatus,
                 antispam: settings.antispam,
                 antibug: settings.antibug
-                // BUG FEATURE REMOVED
             }
         });
     } catch (error) {
@@ -144,20 +143,9 @@ async function startInsidious() {
 
     globalConn = conn;
 
-    // HANDLE QR CODE
+    // HANDLE CONNECTION
     conn.ev.on('connection.update', async (update) => {
-        const { connection, qr } = update;
-        
-        if (qr) {
-            qrCodeData = qr;
-            console.log(fancy("📱 Scan QR Code below:"));
-            try {
-                const qrcode = require('qrcode-terminal');
-                qrcode.generate(qr, { small: true });
-            } catch (e) {
-                console.log("QR Code:", qr.substring(0, 100) + "...");
-            }
-        }
+        const { connection } = update;
         
         if (connection === 'open') {
             console.log(fancy("👹 insidious is alive and connected."));
@@ -189,28 +177,6 @@ async function startInsidious() {
                 console.log(fancy("🔄 Reconnecting..."));
                 setTimeout(startInsidious, 5000);
             }
-        }
-    });
-
-    // QR CODE API
-    app.get('/api/qr', (req, res) => {
-        if (globalConn?.user) {
-            return res.json({ 
-                status: 'connected', 
-                user: globalConn.user.id 
-            });
-        }
-        
-        if (qrCodeData) {
-            res.json({ 
-                qr: qrCodeData,
-                status: 'waiting'
-            });
-        } else {
-            res.json({ 
-                qr: null, 
-                status: 'no_qr' 
-            });
         }
     });
 
@@ -265,7 +231,7 @@ async function startInsidious() {
         require('./handler')(conn, m);
     });
 
-    // GROUP PARTICIPANTS UPDATE
+    // GROUP PARTICIPANTS UPDATE (IMPROVED WITH GROUP INFO)
     conn.ev.on('group-participants.update', async (anu) => {
         try {
             const settings = await Settings.findOne();
@@ -274,27 +240,73 @@ async function startInsidious() {
             const metadata = await conn.groupMetadata(anu.id);
             const participants = anu.participants;
             
-            for (let num of participants) {
-                let quote = "Welcome to the Further.";
-                try {
-                    const quoteRes = await axios.get('https://api.quotable.io/random', { timeout: 3000 });
-                    quote = quoteRes.data.content;
-                } catch (e) {}
+            // Get group description
+            const groupDesc = metadata.desc || "No description";
+            
+            // Try to get group picture
+            let groupPicture = null;
+            try {
+                groupPicture = await conn.profilePictureUrl(anu.id, 'image').catch(async () => {
+                    return await conn.profilePictureUrl(anu.id, 'preview').catch(() => null);
+                });
+            } catch (e) {
+                console.log("No group picture found");
+            }
 
+            for (let num of participants) {
                 if (anu.action == 'add') {
-                    const welcomeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ɴᴇᴡ ꜱᴏᴜʟ ᴅᴇᴛᴇᴄᴛᴇᴅ")}\n╰── • 🥀 • ──╯\n\n│ ◦ Welcome @${num.split("@")[0]}\n│ ◦ Group: ${metadata.subject}\n│ ◦ Members: ${metadata.participants.length}\n\n🥀 "${fancy(quote)}"\n\n${fancy(config.footer)}`;
+                    const welcomeMsg = `╭─── • 🥀 • ───╮\n   𝙒𝙀𝙇𝘾𝙊𝙈𝙀 𝙏𝙊 𝙏𝙃𝙀 𝙁𝙐𝙍𝙏𝙃𝙀𝙍\n╰─── • 🥀 • ───╯\n\n🎉 Welcome @${num.split("@")[0]}!\n\n📛 *Group:* ${metadata.subject}\n👥 *Members:* ${metadata.participants.length}\n📝 *Description:* ${groupDesc}\n\n🥀 "${fancy("A new soul has entered the void")}"\n\n${fancy(config.footer)}`;
                     
-                    await conn.sendMessage(anu.id, { 
-                        text: welcomeMsg,
-                        mentions: [num] 
-                    });
+                    // Send message with group image if available
+                    if (groupPicture) {
+                        try {
+                            const imageResponse = await axios.get(groupPicture, { responseType: 'arraybuffer' });
+                            const imageBuffer = Buffer.from(imageResponse.data, 'binary');
+                            
+                            await conn.sendMessage(anu.id, { 
+                                image: imageBuffer,
+                                caption: welcomeMsg,
+                                mentions: [num]
+                            });
+                        } catch (e) {
+                            await conn.sendMessage(anu.id, { 
+                                text: welcomeMsg,
+                                mentions: [num] 
+                            });
+                        }
+                    } else {
+                        await conn.sendMessage(anu.id, { 
+                            text: welcomeMsg,
+                            mentions: [num] 
+                        });
+                    }
                     
                 } else if (anu.action == 'remove') {
-                    const goodbyeMsg = `╭── • 🥀 • ──╮\n  ${fancy("ꜱᴏᴜʟ ʟᴇꜰᴛ")}\n╰── • 🥀 • ──╯\n\n│ ◦ @${num.split('@')[0]} ʜᴀꜱ ᴇxɪᴛᴇᴅ.\n🥀 "${fancy(quote)}"`;
-                    await conn.sendMessage(anu.id, { 
-                        text: goodbyeMsg,
-                        mentions: [num] 
-                    });
+                    const goodbyeMsg = `╭─── • 🥀 • ───╮\n   𝙎𝙊𝙐𝙇 𝙃𝘼𝙎 𝙇𝙀𝙁𝙏 𝙏𝙃𝙀 𝙑𝙊𝙄𝘿\n╰─── • 🥀 • ───╯\n\n👋 @${num.split('@')[0]} has left the group\n\n📛 *Group:* ${metadata.subject}\n📝 *Description:* ${groupDesc}\n\n🥀 "${fancy("Another soul departs")}"`;
+                    
+                    // Send message with group image if available
+                    if (groupPicture) {
+                        try {
+                            const imageResponse = await axios.get(groupPicture, { responseType: 'arraybuffer' });
+                            const imageBuffer = Buffer.from(imageResponse.data, 'binary');
+                            
+                            await conn.sendMessage(anu.id, { 
+                                image: imageBuffer,
+                                caption: goodbyeMsg,
+                                mentions: [num]
+                            });
+                        } catch (e) {
+                            await conn.sendMessage(anu.id, { 
+                                text: goodbyeMsg,
+                                mentions: [num] 
+                            });
+                        }
+                    } else {
+                        await conn.sendMessage(anu.id, { 
+                            text: goodbyeMsg,
+                            mentions: [num] 
+                        });
+                    }
                 }
             }
         } catch (e) { 
@@ -388,4 +400,4 @@ startInsidious().catch(console.error);
 // Start web server
 app.listen(PORT, () => console.log(`🌐 Dashboard running on port ${PORT}`));
 
-module.exports = { startInsidious, globalConn }; 
+module.exports = { startInsidious, globalConn };
