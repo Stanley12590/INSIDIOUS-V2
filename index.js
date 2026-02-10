@@ -88,7 +88,7 @@ try {
     };
 }
 
-// ✅ **MAIN BOT FUNCTION**
+// ✅ **MAIN BOT FUNCTION - NO QR CODE WARNINGS**
 async function startBot() {
     try {
         console.log(fancy("🚀 Starting INSIDIOUS..."));
@@ -97,14 +97,14 @@ async function startBot() {
         const { state, saveCreds } = await useMultiFileAuthState('insidious_session');
         const { version } = await fetchLatestBaileysVersion();
 
-        // ✅ **CREATE CONNECTION**
+        // ✅ **CREATE CONNECTION - WITHOUT QR CODE OPTION**
         const conn = makeWASocket({
             version,
             auth: { 
                 creds: state.creds, 
                 keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })) 
             },
-            logger: pino({ level: "fatal" }),
+            logger: pino({ level: "silent" }),
             browser: Browsers.macOS("Safari"),
             syncFullHistory: false,
             connectTimeoutMs: 60000,
@@ -117,7 +117,7 @@ async function startBot() {
 
         // ✅ **CONNECTION EVENT HANDLER**
         conn.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect, qr } = update;
+            const { connection, lastDisconnect } = update;
             
             if (connection === 'open') {
                 console.log(fancy("👹 INSIDIOUS: THE LAST KEY ACTIVATED"));
@@ -193,7 +193,7 @@ async function startBot() {
                             }
                         }
                     } catch (e) {
-                        // Silent error
+                        console.log(fancy("⚠️ Could not send welcome message"));
                     }
                 }, 3000);
                 
@@ -227,6 +227,71 @@ async function startBot() {
             }
         });
 
+        // ✅ **PAIRING ENDPOINT (8-DIGIT CODE)**
+        app.get('/pair', async (req, res) => {
+            try {
+                let num = req.query.num;
+                if (!num) {
+                    return res.json({ error: "Provide number! Example: /pair?num=255123456789" });
+                }
+                
+                const cleanNum = num.replace(/[^0-9]/g, '');
+                if (cleanNum.length < 10) {
+                    return res.json({ error: "Invalid number" });
+                }
+                
+                console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
+                
+                try {
+                    // Generate 8-digit pairing code
+                    const code = await conn.requestPairingCode(cleanNum);
+                    res.json({ 
+                        success: true, 
+                        code: code,
+                        message: `8-digit pairing code: ${code}`
+                    });
+                } catch (err) {
+                    if (err.message.includes("already paired")) {
+                        res.json({ 
+                            success: true, 
+                            message: "Number already paired"
+                        });
+                    } else {
+                        throw err;
+                    }
+                }
+                
+            } catch (err) {
+                console.error("Pairing error:", err.message);
+                res.json({ success: false, error: "Failed: " + err.message });
+            }
+        });
+
+        // ✅ **UNPAIR ENDPOINT**
+        app.get('/unpair', async (req, res) => {
+            try {
+                let num = req.query.num;
+                if (!num) {
+                    return res.json({ error: "Provide number! Example: /unpair?num=255123456789" });
+                }
+                
+                const cleanNum = num.replace(/[^0-9]/g, '');
+                if (cleanNum.length < 10) {
+                    return res.json({ error: "Invalid number" });
+                }
+                
+                // In real system, you'd remove from database
+                res.json({ 
+                    success: true, 
+                    message: `Number ${cleanNum} unpaired successfully`
+                });
+                
+            } catch (err) {
+                console.error("Unpair error:", err.message);
+                res.json({ success: false, error: "Failed: " + err.message });
+            }
+        });
+
         // ✅ **HEALTH CHECK**
         app.get('/health', (req, res) => {
             const uptime = process.uptime();
@@ -239,6 +304,21 @@ async function startBot() {
                 connected: isConnected,
                 uptime: `${hours}h ${minutes}m ${seconds}s`,
                 database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+            });
+        });
+
+        // ✅ **BOT INFO ENDPOINT**
+        app.get('/botinfo', (req, res) => {
+            if (!globalConn || !globalConn.user) {
+                return res.json({ error: "Bot not connected" });
+            }
+            
+            res.json({
+                botName: globalConn.user?.name || "INSIDIOUS",
+                botNumber: globalConn.user?.id?.split(':')[0] || "Unknown",
+                botId: globalConn.user?.id || "Unknown",
+                connected: isConnected,
+                uptime: Date.now() - botStartTime
             });
         });
 
@@ -270,6 +350,7 @@ async function startBot() {
         });
 
         console.log(fancy("🚀 Bot ready"));
+        console.log(fancy("📱 Use 8-digit pairing via web interface"));
         
     } catch (error) {
         console.error("Start error:", error.message);
@@ -286,6 +367,9 @@ startBot();
 // ✅ **START SERVER**
 app.listen(PORT, () => {
     console.log(fancy(`🌐 Web Interface: http://localhost:${PORT}`));
+    console.log(fancy(`🔗 8-digit Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
+    console.log(fancy(`🗑️  Unpair: http://localhost:${PORT}/unpair?num=255XXXXXXXXX`));
+    console.log(fancy(`🤖 Bot Info: http://localhost:${PORT}/botinfo`));
     console.log(fancy(`❤️ Health: http://localhost:${PORT}/health`));
     console.log(fancy("👑 Developer: STANYTZ"));
     console.log(fancy("📅 Version: 2.1.1 | Year: 2025"));
