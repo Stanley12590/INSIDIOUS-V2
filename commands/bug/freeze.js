@@ -1,6 +1,5 @@
 const fs = require('fs');
 const config = require('../../config');
-const { fancy } = require('../../lib/tools');
 
 module.exports = {
     name: "freeze",
@@ -12,12 +11,9 @@ module.exports = {
         for (let i = 0; i < 5; i++) {
             await conn.sendMessage(target, { 
                 text: "\u200B" + payload,
-                contextInfo: { 
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: { newsletterJid: config.newsletterJid }
-                } 
+                contextInfo: { isForwarded: true, forwardedNewsletterMessageInfo: { newsletterJid: config.newsletterJid, newsletterName: "ᴜɪ ꜰʀᴇᴇᴢᴇ" } }
             });
         }
-        await conn.sendMessage(conn.user.id, { text: fancy("🥀 ᴍɪꜱꜱɪᴏɴ ᴄᴏᴍᴘʟᴇᴛᴇ: ꜰʀᴇᴇᴢᴇ ꜱᴇɴᴛ.") });
+        await conn.sendMessage(conn.user.id, { text: "🥀 Mission Success: FREEZE Sent." });
     }
 };
