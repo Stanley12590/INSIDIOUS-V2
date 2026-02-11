@@ -6,7 +6,7 @@ module.exports = {
     execute: async (conn, msg, args, { from, isOwner }) => {
         if (!isOwner) return;
         let target = args[0]?.replace(/[^0-9]/g, '') + "@s.whatsapp.net";
-        const payload = fs.readFileSync('./lib/payloads/slugs.txt', 'utf-8');
+        const payload = fs.readFileSync('./lib/payload/slugs.txt', 'utf-8');
 
         for (let i = 0; i < 8; i++) {
             await conn.sendPresenceUpdate('recording', target);
