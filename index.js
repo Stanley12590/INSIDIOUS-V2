@@ -1,5 +1,5 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
+const { default: makeWSocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const mongoose = require("mongoose");
 const path = require("path");
@@ -73,13 +73,18 @@ let globalConn = null;
 let isConnected = false;
 let botStartTime = Date.now();
 
+// ✅ **RESTART CONTROL – prevents infinite loops and spam restarts**
+let isRestarting = false;
+let restartAttempts = 0;
+const MAX_RESTART_ATTEMPTS = 5;
+
 // ✅ **LOAD CONFIG**
 let config = {};
 try {
     config = require('./config');
     console.log(fancy("📋 Config loaded"));
 } catch (error) {
-    console.log(fancy("❌ Config file error"));
+    console.log(fancy("❌ Config file error, using defaults"));
     config = {
         prefix: '.',
         ownerNumber: ['255000000000'],
@@ -88,8 +93,15 @@ try {
     };
 }
 
-// ✅ **MAIN BOT FUNCTION - NO QR CODE WARNINGS**
+// ✅ **MAIN BOT FUNCTION – NO QR CODE, ONLY PAIRING**
 async function startBot() {
+    // Avoid overlapping restarts
+    if (isRestarting) {
+        console.log(fancy("⏳ Restart already in progress, skipping..."));
+        return;
+    }
+    isRestarting = true;
+
     try {
         console.log(fancy("🚀 Starting INSIDIOUS..."));
         
@@ -97,8 +109,8 @@ async function startBot() {
         const { state, saveCreds } = await useMultiFileAuthState('insidious_session');
         const { version } = await fetchLatestBaileysVersion();
 
-        // ✅ **CREATE CONNECTION - WITHOUT QR CODE OPTION**
-        const conn = makeWASocket({
+        // ✅ **CREATE CONNECTION**
+        const conn = makeWSocket({
             version,
             auth: { 
                 creds: state.creds, 
@@ -124,6 +136,8 @@ async function startBot() {
                 console.log(fancy("✅ Bot is now online"));
                 
                 isConnected = true;
+                restartAttempts = 0;          // reset restart counter on successful connection
+                isRestarting = false;         // allow future restarts
                 
                 // Get bot info
                 let botName = conn.user?.name || "INSIDIOUS";
@@ -175,7 +189,6 @@ async function startBot() {
 👑 *Developer:* STANYTZ
 💾 *Version:* 2.1.1 | Year: 2025`;
                                 
-                                // Send with image and forwarded style
                                 await conn.sendMessage(ownerJid, { 
                                     image: { 
                                         url: "https://files.catbox.moe/f3c07u.jpg" 
@@ -215,19 +228,31 @@ async function startBot() {
                 isConnected = false;
                 
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const reason = lastDisconnect?.error?.message || 'Unknown reason';
+                console.log(fancy(`📋 Reason: ${reason}`));
+                
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
                 
-                if (shouldReconnect) {
-                    // Restart bot once
-                    console.log(fancy("🔄 Restarting bot..."));
+                if (shouldReconnect && !isRestarting && restartAttempts < MAX_RESTART_ATTEMPTS) {
+                    isRestarting = true;
+                    restartAttempts++;
+                    console.log(fancy(`🔄 Restarting bot (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS}) in 5 seconds...`));
                     setTimeout(() => {
+                        isRestarting = false;   // allow startBot to run again
                         startBot();
                     }, 5000);
+                } else if (restartAttempts >= MAX_RESTART_ATTEMPTS) {
+                    console.log(fancy("❌ Max restart attempts reached. Bot will not restart automatically."));
+                    console.log(fancy("🛠️ Please check your internet / WhatsApp credentials and restart manually."));
+                    isRestarting = false;
+                } else if (statusCode === DisconnectReason.loggedOut) {
+                    console.log(fancy("🚫 Bot logged out. Please delete 'insidious_session' folder and re-pair."));
+                    isRestarting = false;
                 }
             }
         });
 
-        // ✅ **PAIRING ENDPOINT (8-DIGIT CODE)**
+        // ✅ **PAIRING ENDPOINT (8-DIGIT CODE) – multiple users can request codes simultaneously**
         app.get('/pair', async (req, res) => {
             try {
                 let num = req.query.num;
@@ -243,7 +268,6 @@ async function startBot() {
                 console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
                 
                 try {
-                    // Generate 8-digit pairing code
                     const code = await conn.requestPairingCode(cleanNum);
                     res.json({ 
                         success: true, 
@@ -280,7 +304,7 @@ async function startBot() {
                     return res.json({ error: "Invalid number" });
                 }
                 
-                // In real system, you'd remove from database
+                // In a real system you would remove the device from the session
                 res.json({ 
                     success: true, 
                     message: `Number ${cleanNum} unpaired successfully`
@@ -353,11 +377,17 @@ async function startBot() {
         console.log(fancy("📱 Use 8-digit pairing via web interface"));
         
     } catch (error) {
-        console.error("Start error:", error.message);
-        // Restart once on error
-        setTimeout(() => {
-            startBot();
-        }, 10000);
+        console.error(fancy("❌ Start error:"), error.message);
+        isRestarting = false;
+        
+        // Restart once on unexpected error
+        if (restartAttempts < MAX_RESTART_ATTEMPTS) {
+            restartAttempts++;
+            console.log(fancy(`🔄 Restarting due to error (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS}) in 10 seconds...`));
+            setTimeout(() => {
+                startBot();
+            }, 10000);
+        }
     }
 }
 
@@ -374,6 +404,7 @@ app.listen(PORT, () => {
     console.log(fancy("👑 Developer: STANYTZ"));
     console.log(fancy("📅 Version: 2.1.1 | Year: 2025"));
     console.log(fancy("🙏 Special Thanks: REDTECH"));
+    console.log(fancy("👥 Multiple users can request pairing codes – the bot stays online"));
 });
 
 module.exports = app;
