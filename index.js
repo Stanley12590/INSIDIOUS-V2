@@ -210,28 +210,33 @@ async function startBot() {
             }
             
             if (connection === 'close') {
+                console.log(fancy("🔌 Connection closed"));
                 isConnected = false;
                 
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
-                const reason = lastDisconnect?.error?.message || 'Unknown reason';
-                console.log(fancy(`📋 Reason: ${reason}`));
                 
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                
-                if (shouldReconnect) {
-                    // Restart bot forever – no limit, no stop
+                if (statusCode !== DisconnectReason.loggedOut) {
+                    console.log(fancy("🔄 Restarting bot..."));
                     setTimeout(() => {
                         startBot();
                     }, 5000);
-                } else if (statusCode === DisconnectReason.loggedOut) {
+                } else {
                     console.log(fancy("🚫 Bot logged out. Please delete 'insidious_session' folder and re-pair."));
                 }
             }
         });
 
-        // ✅ **PAIRING ENDPOINT (8-DIGIT CODE) – multiple users can request codes simultaneously**
+        // ✅ **PAIRING ENDPOINT (8-DIGIT CODE) – MULTIPLE USERS SUPPORT**
         app.get('/pair', async (req, res) => {
             try {
+                // 🔴 FIX: Check if bot is connected before attempting pairing
+                if (!globalConn || !isConnected) {
+                    return res.json({ 
+                        success: false, 
+                        error: "Bot is offline or reconnecting. Please wait a few seconds and try again." 
+                    });
+                }
+
                 let num = req.query.num;
                 if (!num) {
                     return res.json({ error: "Provide number! Example: /pair?num=255123456789" });
@@ -245,7 +250,7 @@ async function startBot() {
                 console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
                 
                 try {
-                    const code = await conn.requestPairingCode(cleanNum);
+                    const code = await globalConn.requestPairingCode(cleanNum);
                     res.json({ 
                         success: true, 
                         code: code,
@@ -356,6 +361,7 @@ async function startBot() {
     } catch (error) {
         console.error(fancy("❌ Start error:"), error.message);
         // Restart forever on unexpected error
+        console.log(fancy("🔄 Restarting bot..."));
         setTimeout(() => {
             startBot();
         }, 10000);
