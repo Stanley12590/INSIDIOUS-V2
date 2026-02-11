@@ -1,87 +1,76 @@
 const fs = require('fs-extra');
 const path = require('path');
 const config = require('../../config');
-const { fancy, runtime } = require('../../lib/font');
+const { fancy, runtime } = require('../../lib/tools');
 
 module.exports = {
     name: "menu",
-    execute: async (conn, msg, args, { from }) => {
+    execute: async (conn, msg, args, { from, pushname }) => {
         try {
+            // 1. Ionekane bot inaandika (Typing...)
             await conn.sendPresenceUpdate('composing', from);
 
-            // 1. Hesabu ya Commands
+            // 2. Njia ya kuelekea kwenye folder la commands
             const cmdPath = path.join(__dirname, '../../commands');
             const categories = fs.readdirSync(cmdPath);
             let totalCmds = 0;
-            categories.forEach(cat => {
-                totalCmds += fs.readdirSync(path.join(cmdPath, cat)).filter(f => f.endsWith('.js')).length;
-            });
+            
+            // 3. Header ya Menu (Premium Horror Style)
+            let menuTxt = `╭── • 🥀 • ──╮\n  ${fancy(config.botName)}\n╰── • 🥀 • ──╯\n\n`;
+            menuTxt += `│ ◦ ${fancy("ꜱᴏᴜʟ")}: ${pushname}\n`;
+            menuTxt += `│ ◦ ${fancy("ᴏᴡɴᴇʀ")}: ${config.ownerName}\n`;
+            menuTxt += `│ ◦ ${fancy("ᴜᴘᴛɪᴍᴇ")}: ${runtime(process.uptime())}\n`;
+            menuTxt += `│ ◦ ${fancy("ᴍᴏᴅᴇ")}: ${config.workMode.toUpperCase()}\n`;
+            menuTxt += `│ ◦ ${fancy("ᴘʀᴇꜰɪx")}: ${config.prefix}\n\n`;
 
-            // 2. Header ya Menu
-            let menu = `╭── • 🥀 • ──╮\n  ${fancy(config.botName)}\n╰── • 🥀 • ──╯\n\n`;
-            menu += `│ ◦ ${fancy("ᴏᴡɴᴇʀ")}: ${config.ownerName}\n`;
-            menu += `│ ◦ ${fancy("ᴜᴘᴛɪᴍᴇ")}: ${runtime(process.uptime())}\n`;
-            menu += `│ ◦ ${fancy("ᴍᴏᴅᴇ")}: ${config.workMode.toUpperCase()}\n`;
-            menu += `│ ◦ ${fancy("ᴄᴍᴅꜱ")}: ${totalCmds}\n\n`;
-
-            // 3. Loop ya Categories - COMMANDS WIMA
+            // 4. Kupitia kila sub-folder na kupanga commands KWA WIMA
             categories.forEach(cat => {
                 const files = fs.readdirSync(path.join(cmdPath, cat))
                     .filter(f => f.endsWith('.js'))
                     .map(f => f.replace('.js', ''));
                 
-                menu += `🥀 *${fancy(cat.toUpperCase())}*\n`;
-                
-                // COMMANDS WIMA - Kila command kwa line yake
-                files.forEach(file => {
-                    menu += `│ ◦ ${file}\n`;
-                });
-                menu += `\n`;
+                if (files.length > 0) {
+                    totalCmds += files.length;
+                    menuTxt += `🥀 *${fancy(cat.toUpperCase())}*\n`;
+                    
+                    // Logic ya kupanga commands kwa wima (Kila moja na mstari wake)
+                    files.forEach(file => {
+                        menuTxt += `│ ◦ ${file}\n`;
+                    });
+                    menuTxt += `│\n`; // Nafasi kidogo baada ya kila category
+                }
             });
 
-            // 4. Features List
-            menu += `🥀 *${fancy("ACTIVE FEATURES")}*\n`;
-            menu += `│ ◦ 🔗 Anti Link (Admin Only)\n`;
-            menu += `│ ◦ 🚫 Anti Porn (Admin Only)\n`;
-            menu += `│ ◦ ⚠️ Anti Scam (Admin Only)\n`;
-            menu += `│ ◦ 📷 Anti Media (Admin Only)\n`;
-            menu += `│ ◦ #️⃣ Anti Tag (Admin Only)\n`;
-            menu += `│ ◦ 👁️ Anti View Once\n`;
-            menu += `│ ◦ 🗑️ Anti Delete\n`;
-            menu += `│ ◦ 💤 Sleeping Mode\n`;
-            menu += `│ ◦ 🎉 Welcome/Goodbye\n`;
-            menu += `│ ◦ 📊 Active Members\n`;
-            menu += `│ ◦ 🤖 AI Chatbot\n`;
-            menu += `│ ◦ 👀 Auto Read\n`;
-            menu += `│ ◦ ❤️ Auto React\n`;
-            menu += `│ ◦ 📼 Auto Recording\n`;
-            menu += `│ ◦ 💾 Auto Save\n`;
-            menu += `│ ◦ 📞 Anti Call\n`;
-            menu += `│ ◦ 📥 Download Status\n`;
-            menu += `│ ◦ 🚫 Anti Spam\n`;
-            menu += `│ ◦ 🐛 Anti Bug\n`;
-            menu += `\n`;
+            menuTxt += `│ ◦ ${fancy("ᴛᴏᴛᴀʟ ᴄᴍᴅꜱ")}: ${totalCmds}\n`;
+            menuTxt += `└──────────────\n${fancy(config.footer)}`;
 
-            menu += `└──────────────\n${fancy(config.footer)}`;
-
-            // 5. Tuma kwa Branding ya Newsletter
+            // 5. Tuma Menu kwa kutumia picha kutoka config.menuImage
             await conn.sendMessage(from, { 
-                image: { url: config.menuImage }, 
-                caption: menu,
+                image: { url: config.menuImage }, // Hapa inavuta: https://files.catbox.moe/irqrap.jpg
+                caption: menuTxt,
                 contextInfo: { 
                     isForwarded: true, 
+                    forwardingScore: 999,
                     forwardedNewsletterMessageInfo: { 
                         newsletterJid: config.newsletterJid, 
-                        newsletterName: config.botName 
-                    } 
-                }
+                        newsletterName: config.botName,
+                        serverMessageId: 100
+                    },
+                    // Feature 30: Branding link ya Group/Channel
+                    externalAdReply: {
+                        title: "🥀 ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ2.1.1 🥀",
+                        body: "ᴛʜᴇ ʟᴀꜱᴛ ᴋᴇʏ ᴀᴜᴛᴏᴍᴀᴛɪᴏɴ",
+                        mediaType: 1,
+                        renderLargerThumbnail: true,
+                        thumbnailUrl: config.menuImage,
+                        sourceUrl: config.channelLink
+                    }
+                } 
             }, { quoted: msg });
 
         } catch (e) {
-            console.error("Menu error:", e);
-            try {
-                await conn.sendMessage(from, { text: fancy("Error summoning the menu...") }, { quoted: msg });
-            } catch (e2) {}
+            console.error(e);
+            msg.reply(fancy("🥀 Shadows failed to manifest the menu..."));
         }
     }
 };
