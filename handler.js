@@ -15,7 +15,7 @@ try {
 } catch {
     fancy = function(text) {
         if (!text || typeof text !== 'string') return text;
-        const fancyMap = { 
+        const fancyMap = {
             a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ',
             j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ',
             s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ',
@@ -310,7 +310,7 @@ module.exports = async (conn, m) => {
         const senderNumber = sender.split('@')[0];
         const body = (msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || "");
 
-        // ✅ OWNER DETECTION (FIXED)
+        // ✅ OWNER DETECTION (FIXED 100%)
         const isFromMe = msg.key.fromMe || false;
         const isDeployerUser = isDeployer(senderNumber);
         const isCoOwnerUser = isCoOwner(senderNumber);
@@ -413,7 +413,7 @@ module.exports = async (conn, m) => {
             } catch (e) {}
         }
 
-        // 📁 COMMAND HANDLER
+        // 📁 COMMAND HANDLER (ORIGINAL SIMPLE FORMAT)
         if (body.startsWith(config.prefix)) {
             const command = body.slice(config.prefix.length).trim().split(' ')[0].toLowerCase();
             const args = body.trim().split(/ +/).slice(1);
@@ -435,7 +435,10 @@ module.exports = async (conn, m) => {
                         canPairNumber,
                         pairNumber,
                         unpairNumber,
-                        getPairedNumbers
+                        getPairedNumbers,
+                        reply: async (text, options = {}) => {
+                            return await conn.sendMessage(from, { text, ...options }, { quoted: msg });
+                        }
                     });
                 }
             }
@@ -468,3 +471,4 @@ module.exports.getPairedNumbers = getPairedNumbers;
 module.exports.getBotId = () => botSecretId;
 module.exports.isDeployer = isDeployer;
 module.exports.isCoOwner = isCoOwner;
+module.exports.canPairNumber = canPairNumber;
