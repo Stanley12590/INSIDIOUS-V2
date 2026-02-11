@@ -1,123 +1,132 @@
-// Load database models
-let Settings;
-try {
-    const models = require('../../database/models');
-    Settings = models.Settings;
-} catch (error) {
-    Settings = { 
-        findOne: async () => ({ 
-            antilink: true, antiporn: true, antiscam: true, 
-            save: async function() { return this; }
-        }) 
-    };
-}
+const fs = require('fs-extra');
+const path = require('path');
+const handler = require('../../handler');
 
 module.exports = {
     name: "settings",
-    desc: "Manage bot settings",
-    category: "owner",
+    aliases: ["setting", "config"],
     ownerOnly: true,
+    description: "Manage all bot features (toggle on/off)",
+    usage: "[feature] [on/off]",
+    
+    execute: async (conn, msg, args, { from, fancy, config, isOwner, reply }) => {
+        if (!isOwner) return reply("❌ This command is for owner only!");
 
-    execute: async ({ conn, msg, args, from, sender, isGroup, isOwner, pushname, reply, config }) => {
-        // FIXED: Destructure from params object
-        if (!isOwner) {
-            return reply("❌ This command is only for bot owner!");
+        // Load current settings from handler
+        let settings = await handler.loadSettings();
+
+        // -------------------- SHOW ALL SETTINGS --------------------
+        if (args.length === 0) {
+            let text = `╭─── • 🥀 • ───╮\n`;
+            text += `   *BOT SETTINGS*  \n`;
+            text += `╰─── • 🥀 • ───╯\n\n`;
+
+            text += `🔧 *ANTI FEATURES*\n`;
+            text += `┌─────────────────\n`;
+            text += `│ 🛡️ Antilink     : ${settings.antilink ? '✅ ON' : '❌ OFF'}\n`;
+            text += `│ 🔞 Antiporn     : ${settings.antiporn ? '✅ ON' : '❌ OFF'}\n`;
+            text += `│ 💰 Antiscam     : ${settings.antiscam ? '✅ ON' : '❌ OFF'}\n`;
+            text += `│ 🏷️ Antitag      : ${settings.antitag ? '✅ ON' : '❌ OFF'}\n`;
+            text += `│ 👁️ AntiViewOnce : ${settings.antiviewonce ? '✅ ON' : '❌ OFF'}\n`;
+            text += `│ 🗑️ AntiDelete   : ${settings.antidelete ? '✅ ON' : '❌ OFF'}\n`;
+            text += `└─────────────────\n\n`;
+
+            text += `⚡ *AUTO FEATURES*\n`;
+            text += `┌─────────────────\n`;
+            text += `│ 👀 AutoRead     : ${settings.autoRead ? '✅ ON' : '❌ OFF'}\n`;
+            text += `│ ❤️ AutoReact    : ${settings.autoReact ? '✅ ON' : '❌ OFF'}\n`;
+            text += `│ ⌨️ AutoTyping   : ${settings.autoTyping ? '✅ ON' : '❌ OFF'}\n`;
+            text += `│ 🎙️ AutoRecording: ${settings.autoRecording ? '✅ ON' : '❌ OFF'}\n`;
+            text += `│ 📝 AutoBio      : ${settings.autoBio ? '✅ ON' : '❌ OFF'}\n`;
+            text += `└─────────────────\n\n`;
+
+            text += `👥 *GROUP FEATURES*\n`;
+            text += `┌─────────────────\n`;
+            text += `│ 🎉 Welcome/Goodbye: ${settings.welcomeGoodbye ? '✅ ON' : '❌ OFF'}\n`;
+            text += `└─────────────────\n\n`;
+
+            text += `🤖 *AI FEATURES*\n`;
+            text += `┌─────────────────\n`;
+            text += `│ 💬 Chatbot      : ${settings.chatbot ? '✅ ON' : '❌ OFF'}\n`;
+            text += `└─────────────────\n\n`;
+
+            text += `🔐 *PAIRING SYSTEM*\n`;
+            text += `┌─────────────────\n`;
+            text += `│ 👥 Max Co‑owners: ${settings.maxCoOwners}\n`;
+            text += `└─────────────────\n\n`;
+
+            text += `🌐 *BOT MODE*\n`;
+            text += `┌─────────────────\n`;
+            text += `│ 🤖 Mode        : ${settings.mode === 'public' ? '🌍 PUBLIC' : '🔒 SELF'}\n`;
+            text += `└─────────────────\n\n`;
+
+            text += `💡 *USAGE:*\n`;
+            text += `${config.prefix}settings <feature> [on/off]\n`;
+            text += `📌 *Example:* ${config.prefix}settings antilink on\n`;
+            text += `📌 *Example:* ${config.prefix}settings chatbot off\n`;
+            text += `📌 *Example:* ${config.prefix}settings mode public\n`;
+            text += `📌 *Example:* ${config.prefix}settings maxCoOwners 3\n\n`;
+            text += `_Settings are saved permanently._`;
+
+            return reply(fancy(text));
         }
-        
-        const subcommand = args[0]?.toLowerCase();
-        
-        if (!subcommand) {
-            // Show current settings
-            const settings = await Settings.findOne() || {};
-            
-            let menu = `╭─── • 🥀 • ───╮\n   SETTINGS MENU\n╰─── • 🥀 • ───╯\n\n`;
-            menu += `📊 Current Settings:\n`;
-            menu += `├ 🔗 Antilink: ${settings.antilink ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ 🚫 Antiporn: ${settings.antiporn ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ ⚠️ Antiscam: ${settings.antiscam ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ 📷 Antimedia: ${settings.antimedia ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ #️⃣ Antitag: ${settings.antitag ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ 👁️ Antiviewonce: ${settings.antiviewonce ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ 🗑️ Antidelete: ${settings.antidelete ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ 💤 Sleeping Mode: ${settings.sleepingMode ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ 🤖 Chatbot: ${settings.chatbot ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ 📞 Anticall: ${settings.anticall ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ 👀 Auto Read: ${settings.autoRead ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `├ ❤️ Auto React: ${settings.autoReact ? '✅ ON' : '❌ OFF'}\n`;
-            menu += `└ 👋 Welcome/Goodbye: ${settings.welcomeGoodbye ? '✅ ON' : '❌ OFF'}\n\n`;
-            
-            menu += `⚙️ Usage:\n`;
-            menu += `• ${config.prefix}settings on [feature]\n`;
-            menu += `• ${config.prefix}settings off [feature]\n`;
-            menu += `• ${config.prefix}settings list\n`;
-            
-            return reply(menu);
-        }
-        
-        if (subcommand === 'on' || subcommand === 'off') {
-            const feature = args[1]?.toLowerCase();
-            const value = subcommand === 'on';
-            
-            if (!feature) {
-                return reply(`Specify feature! Example: ${config.prefix}settings on antilink`);
+
+        // -------------------- TOGGLE SPECIFIC FEATURE --------------------
+        const feature = args[0].toLowerCase();
+        let value = args[1] ? args[1].toLowerCase() : null;
+
+        // Special handling for mode
+        if (feature === 'mode') {
+            if (value === 'public' || value === 'self') {
+                settings.mode = value;
+            } else if (value === null) {
+                // toggle between public/self
+                settings.mode = settings.mode === 'public' ? 'self' : 'public';
+            } else {
+                return reply(`❌ Invalid mode. Use: public / self`);
             }
-            
-            const validFeatures = [
-                'antilink', 'antiporn', 'antiscam', 'antitag', 'antiviewonce', 
-                'antidelete', 'sleepingmode', 'welcome', 'chatbot', 'anticall',
-                'autoreact', 'autoread', 'antibug', 'antispam', 'antimedia'
-            ];
-            
-            if (!validFeatures.includes(feature)) {
-                return reply(`Invalid feature! Valid: ${validFeatures.join(', ')}`);
+        }
+        // Special handling for maxCoOwners (numeric)
+        else if (feature === 'maxcoowners' || feature === 'maxCoOwners') {
+            if (!args[1]) return reply(`❌ Provide a number between 1 and 5.`);
+            const num = parseInt(args[1]);
+            if (isNaN(num) || num < 1 || num > 5) {
+                return reply(`❌ Max co‑owners must be between 1 and 5.`);
             }
-            
-            // Update setting
-            try {
-                let dbSettings = await Settings.findOne();
-                if (!dbSettings) {
-                    dbSettings = new Settings();
-                }
-                
-                dbSettings[feature] = value;
-                dbSettings.updatedAt = new Date();
-                await dbSettings.save();
-                
-                return reply(`✅ ${feature} turned ${value ? 'ON' : 'OFF'}`);
-            } catch (error) {
-                return reply(`❌ Error: ${error.message}`);
+            settings.maxCoOwners = num;
+        }
+        // All other boolean features
+        else {
+            if (!(feature in settings)) {
+                return reply(`❌ Feature "${feature}" does not exist.\n📋 Use *${config.prefix}settings* to see the list.`);
+            }
+            if (value === null) {
+                // toggle
+                settings[feature] = !settings[feature];
+            } else if (['on', 'enable', 'true', '1'].includes(value)) {
+                settings[feature] = true;
+            } else if (['off', 'disable', 'false', '0'].includes(value)) {
+                settings[feature] = false;
+            } else {
+                return reply(`❌ Invalid value. Use: on / off`);
             }
         }
-        
-        if (subcommand === 'list') {
-            const settings = await Settings.findOne() || {};
-            let list = `╭─── • 🥀 • ───╮\n   ALL FEATURES\n╰─── • 🥀 • ───╯\n\n`;
-            
-            const features = [
-                { name: '🔗 Antilink', key: 'antilink' },
-                { name: '🚫 Antiporn', key: 'antiporn' },
-                { name: '⚠️ Antiscam', key: 'antiscam' },
-                { name: '📷 Antimedia', key: 'antimedia' },
-                { name: '#️⃣ Antitag', key: 'antitag' },
-                { name: '👁️ Antiviewonce', key: 'antiviewonce' },
-                { name: '🗑️ Antidelete', key: 'antidelete' },
-                { name: '💤 Sleeping Mode', key: 'sleepingMode' },
-                { name: '👋 Welcome/Goodbye', key: 'welcomeGoodbye' },
-                { name: '🤖 Chatbot', key: 'chatbot' },
-                { name: '📞 Anticall', key: 'anticall' },
-                { name: '👀 Auto Read', key: 'autoRead' },
-                { name: '❤️ Auto React', key: 'autoReact' },
-                { name: '📢 Antispam', key: 'antispam' },
-                { name: '🐛 Antibug', key: 'antibug' }
-            ];
-            
-            features.forEach(feat => {
-                list += `${feat.name}: ${settings[feat.key] ? '🟢 ON' : '🔴 OFF'}\n`;
-            });
-            
-            return reply(list);
-        }
-        
-        return reply(`Invalid subcommand. Use:\n${config.prefix}settings on/off [feature]\n${config.prefix}settings list`);
+
+        // Save settings
+        await handler.saveSettings(settings);
+        await handler.refreshConfig(); // update global config
+
+        // Notify user
+        let status = '';
+        if (feature === 'mode') status = settings.mode === 'public' ? '🌍 PUBLIC' : '🔒 SELF';
+        else if (feature === 'maxCoOwners') status = settings.maxCoOwners;
+        else status = settings[feature] ? '✅ ON' : '❌ OFF';
+
+        let response = `✅ *Setting updated!*\n\n`;
+        response += `🔧 Feature: *${feature}*\n`;
+        response += `📊 Status: ${status}\n`;
+        response += `\n_Settings saved._`;
+
+        await reply(fancy(response));
     }
 };
