@@ -1,17 +1,79 @@
 const fs = require('fs-extra');
 const path = require('path');
 const axios = require('axios');
-const config = require('./config');
 
-// Normalize owner numbers
+// ==================== LOAD CONFIG ====================
+let config = {};
+try {
+    config = require('./config');
+} catch {
+    config = {};
+}
+
+// -------------------- NORMALIZE OWNER NUMBERS --------------------
 config.ownerNumber = (config.ownerNumber || [])
     .map(num => num.replace(/[^0-9]/g, ''))
     .filter(num => num.length >= 10);
 
-// Fancy function
+// -------------------- DEFAULT SETTINGS (FALLBACK) --------------------
+const DEFAULT_SETTINGS = {
+    // ANTI FEATURES
+    antilink: true,
+    antiporn: true,
+    antiscam: true,
+    antitag: true,
+    antiviewonce: true,
+    antidelete: true,
+    
+    // AUTOMATION
+    autoRead: true,
+    autoReact: true,
+    autoTyping: true,
+    autoRecording: true,
+    autoBio: true,
+    
+    // GROUP
+    welcomeGoodbye: true,
+    
+    // AI
+    chatbot: true,
+    
+    // PAIRING
+    maxCoOwners: 2,
+    
+    // BOT MODE
+    mode: 'public' // 'public' or 'self'
+};
+
+// ==================== SETTINGS MANAGEMENT ====================
+const SETTINGS_FILE = path.join(__dirname, '.settings.json');
+
+async function loadSettings() {
+    try {
+        if (await fs.pathExists(SETTINGS_FILE)) {
+            const saved = await fs.readJson(SETTINGS_FILE);
+            return { ...DEFAULT_SETTINGS, ...saved };
+        }
+    } catch (e) {}
+    return { ...DEFAULT_SETTINGS };
+}
+
+async function saveSettings(settings) {
+    await fs.writeJson(SETTINGS_FILE, settings, { spaces: 2 });
+}
+
+// Merge settings into config object
+let settingsCache = null;
+async function refreshConfig() {
+    settingsCache = await loadSettings();
+    Object.assign(config, settingsCache);
+}
+refreshConfig(); // initial load
+
+// ==================== FANCY FUNCTION ====================
 let fancy = (text) => text;
 try {
-    fancy = require('./lib/font').fancy;
+    fancy = require('./lib/tools').fancy;
 } catch {
     fancy = function(text) {
         if (!text || typeof text !== 'string') return text;
@@ -27,12 +89,7 @@ try {
     };
 }
 
-// Storage
-const messageStore = new Map();
-const userActivity = new Map();
-const warningTracker = new Map();
-
-// =============== PAIRING SYSTEM (WHATSAPP ONLY) ===============
+// ==================== PAIRING SYSTEM (WHATSAPP ONLY) ====================
 const PAIR_FILE = path.join(__dirname, '.paired.json');
 let pairedNumbers = new Set();
 let botSecretId = null;
@@ -58,6 +115,7 @@ async function loadPairedNumbers() {
         pairedNumbers = new Set();
         botSecretId = generateBotId();
     }
+    // Deployer always paired
     config.ownerNumber.forEach(num => {
         if (num) pairedNumbers.add(num);
     });
@@ -75,7 +133,7 @@ function canPairNumber(number) {
     const clean = number.replace(/[^0-9]/g, '');
     if (config.ownerNumber.includes(clean)) return false;
     const nonOwnerPaired = Array.from(pairedNumbers).filter(n => !config.ownerNumber.includes(n));
-    return nonOwnerPaired.length < 2 && !pairedNumbers.has(clean);
+    return nonOwnerPaired.length < config.maxCoOwners && !pairedNumbers.has(clean);
 }
 
 async function pairNumber(number) {
@@ -108,7 +166,12 @@ function isCoOwner(number) {
     return pairedNumbers.has(clean) && !config.ownerNumber.includes(clean);
 }
 
-// =============== HELPER FUNCTIONS ===============
+// ==================== STORAGE FOR ANTI-DELETE & WARNINGS ====================
+const messageStore = new Map();
+const warningTracker = new Map();
+const userActivity = new Map();
+
+// ==================== HELPER FUNCTIONS ====================
 function getUsername(jid) {
     if (!jid) return 'Unknown';
     return jid.split('@')[0] || 'Unknown';
@@ -143,9 +206,9 @@ async function isBotAdmin(conn, groupJid) {
     }
 }
 
-// =============== AUTO FEATURES ===============
-async function handleAutoTyping(conn, from, settings) {
-    if (!settings?.autoTyping) return;
+// ==================== AUTO FEATURES ====================
+async function handleAutoTyping(conn, from) {
+    if (!config.autoTyping) return;
     try {
         await conn.sendPresenceUpdate('composing', from);
         setTimeout(async () => {
@@ -154,8 +217,8 @@ async function handleAutoTyping(conn, from, settings) {
     } catch (e) {}
 }
 
-async function handleAutoRecording(conn, msg, settings) {
-    if (!settings?.autoRecording) return;
+async function handleAutoRecording(conn, msg) {
+    if (!config.autoRecording) return;
     try {
         const sender = msg.key.participant || msg.key.remoteJid;
         if (!userActivity.has(sender)) userActivity.set(sender, []);
@@ -169,7 +232,7 @@ async function handleAutoRecording(conn, msg, settings) {
     } catch (e) {}
 }
 
-// =============== ANTI DELETE STORAGE ===============
+// ==================== ANTI-DELETE STORAGE ====================
 function storeMessage(msg) {
     try {
         if (!msg.key?.id || msg.key.fromMe) return;
@@ -192,7 +255,7 @@ function storeMessage(msg) {
     } catch (e) {}
 }
 
-// =============== WELCOME/GOODBYE ===============
+// ==================== WELCOME/GOODBYE ====================
 async function handleWelcome(conn, participant, groupJid, action = 'add') {
     try {
         if (!config.welcomeGoodbye) return;
@@ -224,7 +287,7 @@ async function handleWelcome(conn, participant, groupJid, action = 'add') {
     } catch (e) {}
 }
 
-// =============== AUTO-FOLLOW CHANNELS ===============
+// ==================== AUTO-FOLLOW CHANNELS ====================
 async function autoFollowChannels(conn) {
     const channels = config.autoFollowChannels || [];
     for (const channel of channels) {
@@ -237,7 +300,7 @@ async function autoFollowChannels(conn) {
     }
 }
 
-// =============== WELCOME MESSAGE TO DEPLOYER ===============
+// ==================== WELCOME MESSAGE TO DEPLOYER ====================
 async function sendWelcomeToDeployer(conn) {
     if (!config.ownerNumber.length) return;
     const deployerNum = config.ownerNumber[0];
@@ -251,24 +314,24 @@ async function sendWelcomeToDeployer(conn) {
 ╰─── • 🥀 • ───╯
 
 ✅ *Bot Connected Successfully!*
-🤖 *Name:* ${config.botName}
+🤖 *Name:* ${config.botName || 'INSIDIOUS'}
 📞 *Number:* ${botNumber}
 🔐 *Bot ID:* ${botSecretId}
-👥 *Co‑owners:* ${Array.from(pairedNumbers).filter(n => !config.ownerNumber.includes(n)).length}/2
+👥 *Co‑owners:* ${Array.from(pairedNumbers).filter(n => !config.ownerNumber.includes(n)).length}/${config.maxCoOwners}
 
 ⚡ *Status:* ONLINE & ACTIVE
 
 📊 *ALL FEATURES ACTIVE:*
 🛡️ Anti Link / Scam / Porn / Tag / Crash
 🗑️ Anti Delete / ViewOnce
-🤖 AI Chatbot (Pollinations)
+🤖 AI Chatbot
 📢 Auto‑Follow Channels
 ❤️ Auto‑React to Channel Posts
 👀 Auto Read / Auto React
 ⚡ Auto Typing / Recording
 🎉 Welcome/Goodbye
 
-👑 *Deployer:* ${config.ownerName}
+👑 *Deployer:* ${config.ownerName || 'STANY'}
 💾 *Version:* 2.1.1 | Year: 2025
 `;
         await conn.sendMessage(jid, {
@@ -279,7 +342,7 @@ async function sendWelcomeToDeployer(conn) {
                 forwardingScore: 999,
                 forwardedNewsletterMessageInfo: {
                     newsletterJid: config.newsletterJid || '120363404317544295@newsletter',
-                    newsletterName: config.botName
+                    newsletterName: config.botName || 'INSIDIOUS'
                 }
             }
         });
@@ -288,18 +351,196 @@ async function sendWelcomeToDeployer(conn) {
     }
 }
 
-// =============== INIT ===============
+// ==================== ANTI FEATURES WITH WARNING SYSTEM ====================
+async function handleAntiLink(conn, msg, body, from, sender, reply) {
+    if (!config.antilink || !from.endsWith('@g.us')) return false;
+    if (!body.match(/https?:\/\//gi) && !body.match(/chat\.whatsapp\.com/i) && !body.match(/wa\.me/i)) return false;
+    
+    const botAdmin = await isBotAdmin(conn, from);
+    if (!botAdmin) return false;
+    
+    const senderNumber = sender.split('@')[0];
+    const warnings = (warningTracker.get(sender) || 0) + 1;
+    warningTracker.set(sender, warnings);
+    
+    if (warnings >= 3) {
+        await conn.sendMessage(from, { delete: msg.key });
+        await conn.groupParticipantsUpdate(from, [sender], 'remove');
+        await reply(fancy(`🚫 @${senderNumber} removed: Links (3 warnings)`), { mentions: [sender] });
+        warningTracker.delete(sender);
+    } else {
+        await conn.sendMessage(from, { delete: msg.key });
+        await reply(fancy(`⚠️ @${senderNumber} links are not allowed! Warning ${warnings}/3`), { mentions: [sender] });
+    }
+    return true;
+}
+
+async function handleAntiScam(conn, msg, body, from, sender, reply) {
+    if (!config.antiscam || !from.endsWith('@g.us')) return false;
+    if (!config.scamKeywords?.some(w => body.toLowerCase().includes(w))) return false;
+    
+    const botAdmin = await isBotAdmin(conn, from);
+    if (!botAdmin) return false;
+    
+    const senderNumber = sender.split('@')[0];
+    const warnings = (warningTracker.get(sender) || 0) + 1;
+    warningTracker.set(sender, warnings);
+    
+    await conn.sendMessage(from, { delete: msg.key });
+    const meta = await conn.groupMetadata(from);
+    
+    if (warnings >= 3) {
+        await conn.groupParticipantsUpdate(from, [sender], 'remove');
+        await reply(fancy(`🚫 @${senderNumber} removed: Scam (3 warnings)`), { mentions: meta.participants.map(p => p.id) });
+        warningTracker.delete(sender);
+    } else {
+        await reply(fancy(`⚠️ SCAM ALERT! @${senderNumber} – Warning ${warnings}/3`), { mentions: meta.participants.map(p => p.id) });
+    }
+    return true;
+}
+
+async function handleAntiPorn(conn, msg, body, from, sender, reply) {
+    if (!config.antiporn || !from.endsWith('@g.us')) return false;
+    if (!config.pornKeywords?.some(w => body.toLowerCase().includes(w))) return false;
+    
+    const botAdmin = await isBotAdmin(conn, from);
+    if (!botAdmin) return false;
+    
+    const senderNumber = sender.split('@')[0];
+    const warnings = (warningTracker.get(sender) || 0) + 1;
+    warningTracker.set(sender, warnings);
+    
+    await conn.sendMessage(from, { delete: msg.key });
+    
+    if (warnings >= 3) {
+        await conn.groupParticipantsUpdate(from, [sender], 'remove');
+        await reply(fancy(`🚫 @${senderNumber} removed: Adult content (3 warnings)`), { mentions: [sender] });
+        warningTracker.delete(sender);
+    } else {
+        await reply(fancy(`⚠️ @${senderNumber} adult content is forbidden! Warning ${warnings}/3`), { mentions: [sender] });
+    }
+    return true;
+}
+
+async function handleAntiTag(conn, msg, from, sender, reply) {
+    if (!config.antitag || !from.endsWith('@g.us')) return false;
+    const mentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+    if (!mentions || mentions.length < 5) return false; // allow up to 5 tags
+    
+    const botAdmin = await isBotAdmin(conn, from);
+    if (!botAdmin) return false;
+    
+    const senderNumber = sender.split('@')[0];
+    const warnings = (warningTracker.get(sender) || 0) + 1;
+    warningTracker.set(sender, warnings);
+    
+    await conn.sendMessage(from, { delete: msg.key });
+    
+    if (warnings >= 3) {
+        await conn.groupParticipantsUpdate(from, [sender], 'remove');
+        await reply(fancy(`🚫 @${senderNumber} removed: Excessive tagging (3 warnings)`), { mentions: [sender] });
+        warningTracker.delete(sender);
+    } else {
+        await reply(fancy(`⚠️ @${senderNumber} don't tag too many people! Warning ${warnings}/3`), { mentions: [sender] });
+    }
+    return true;
+}
+
+// ==================== ANTI VIEW ONCE / ANTI DELETE ====================
+async function handleViewOnce(conn, msg) {
+    if (!config.antiviewonce) return false;
+    const viewOnceMsg = msg.message?.viewOnceMessageV2 || msg.message?.viewOnceMessage;
+    if (!viewOnceMsg) return false;
+    
+    for (const ownerNum of config.ownerNumber) {
+        const jid = ownerNum + '@s.whatsapp.net';
+        await conn.sendMessage(jid, {
+            forward: msg,
+            caption: fancy('ɪɴꜱɪᴅɪᴏᴜꜱ ᴠɪᴇᴡ ᴏɴᴄᴇ ʀᴇᴄᴏᴠᴇʀʏ')
+        });
+    }
+    return true;
+}
+
+async function handleAntiDelete(conn, msg) {
+    if (!config.antidelete) return false;
+    if (!msg.message?.protocolMessage || msg.message.protocolMessage.type !== 5) return false;
+    
+    const deletedKey = msg.message.protocolMessage.key;
+    const stored = messageStore.get(deletedKey.id);
+    if (!stored) return false;
+    
+    for (const ownerNum of config.ownerNumber) {
+        const jid = ownerNum + '@s.whatsapp.net';
+        await conn.sendMessage(jid, {
+            text: `🗑️ *DELETED MESSAGE RECOVERED*\n\nFrom: @${stored.sender.split('@')[0]}\nMessage: ${stored.content}`,
+            mentions: [stored.sender]
+        });
+    }
+    messageStore.delete(deletedKey.id);
+    return true;
+}
+
+// ==================== AUTO-REACT TO CHANNEL POSTS ====================
+async function autoReactToChannel(conn, msg, from) {
+    if (!from.endsWith('@newsletter') || msg.key.fromMe) return;
+    const reactions = ['❤️', '🔥', '👍', '🎉', '👏', '⚡', '✨', '🌟'];
+    const randomEmoji = reactions[Math.floor(Math.random() * reactions.length)];
+    try {
+        await conn.sendMessage(from, { react: { text: randomEmoji, key: msg.key } });
+        console.log(fancy(`✅ Auto‑reacted ${randomEmoji} to channel post`));
+    } catch (e) {}
+}
+
+// ==================== AI CHATBOT ====================
+async function handleChatbot(conn, msg, from, body) {
+    if (!config.chatbot) return false;
+    if (msg.key.fromMe || from.endsWith('@g.us')) return false;
+    await conn.sendPresenceUpdate('composing', from);
+    try {
+        const ai = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(body)}?system=You are INSIDIOUS V2. Reply humanly in user language.`);
+        await conn.sendMessage(from, {
+            text: fancy(ai.data),
+            contextInfo: {
+                isForwarded: true,
+                forwardedNewsletterMessageInfo: {
+                    newsletterJid: config.newsletterJid || '120363404317544295@newsletter',
+                    newsletterName: config.botName || 'INSIDIOUS'
+                }
+            }
+        }, { quoted: msg });
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+// ==================== CRASH PROTECTION ====================
+async function handleCrashAttempt(conn, msg, body, from, sender, isOwner) {
+    if (body.length > 25000 && !isOwner) {
+        await conn.sendMessage(from, { delete: msg.key });
+        if (from.endsWith('@g.us')) await conn.groupParticipantsUpdate(from, [sender], 'remove');
+        await conn.updateBlockStatus(sender, 'block');
+        console.log(fancy(`🥀 BLOCKED CRASH ATTEMPT FROM: ${sender.split('@')[0]}`));
+        return true;
+    }
+    return false;
+}
+
+// ==================== INIT ====================
 module.exports.init = async (conn) => {
     console.log(fancy('[SYSTEM] Initializing INSIDIOUS...'));
+    await refreshConfig();
     await loadPairedNumbers();
     console.log(fancy(`🔐 Bot ID: ${botSecretId}`));
-    console.log(fancy(`📋 Co‑owners: ${Array.from(pairedNumbers).filter(n => !config.ownerNumber.includes(n)).length}/2`));
+    console.log(fancy(`📋 Co‑owners: ${Array.from(pairedNumbers).filter(n => !config.ownerNumber.includes(n)).length}/${config.maxCoOwners}`));
+    console.log(fancy(`⚙️ Mode: ${config.mode?.toUpperCase() || 'PUBLIC'}`));
     await autoFollowChannels(conn);
     await sendWelcomeToDeployer(conn);
     console.log(fancy('[SYSTEM] ✅ All systems ready'));
 };
 
-// =============== MAIN MESSAGE HANDLER ===============
+// ==================== MAIN MESSAGE HANDLER ====================
 module.exports = async (conn, m) => {
     try {
         const msg = m.messages[0];
@@ -308,9 +549,9 @@ module.exports = async (conn, m) => {
         const from = msg.key.remoteJid;
         const sender = msg.key.participant || msg.key.remoteJid;
         const senderNumber = sender.split('@')[0];
-        const body = (msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || "");
+        const body = (msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || '').trim();
 
-        // OWNER DETECTION (FIXED)
+        // -------------------- OWNER DETECTION --------------------
         const isFromMe = msg.key.fromMe || false;
         const isDeployerUser = isDeployer(senderNumber);
         const isCoOwnerUser = isCoOwner(senderNumber);
@@ -319,123 +560,119 @@ module.exports = async (conn, m) => {
         const isGroup = from.endsWith('@g.us');
         const isChannel = from.endsWith('@newsletter');
 
+        // -------------------- STORE MESSAGE (ANTI-DELETE) --------------------
         storeMessage(msg);
-        await handleAutoTyping(conn, from, config);
-        await handleAutoRecording(conn, msg, config);
 
-        // 🔥 BLOCK CRASH ATTEMPTS
-        if (body.length > 25000 && !isOwner) {
-            await conn.sendMessage(from, { delete: msg.key });
-            if (isGroup) await conn.groupParticipantsUpdate(from, [sender], "remove");
-            await conn.updateBlockStatus(sender, "block");
-            console.log(fancy(`🥀 BLOCKED CRASH ATTEMPT FROM: ${senderNumber}`));
+        // -------------------- AUTO FEATURES --------------------
+        await handleAutoTyping(conn, from);
+        await handleAutoRecording(conn, msg);
+        if (config.autoRead) await conn.readMessages([msg.key]);
+        if (config.autoReact && !msg.key.fromMe && !isChannel) {
+            await conn.sendMessage(from, { react: { text: '🥀', key: msg.key } });
+        }
+
+        // -------------------- AUTO-REACT TO CHANNELS --------------------
+        await autoReactToChannel(conn, msg, from);
+
+        // -------------------- CRASH PROTECTION --------------------
+        if (await handleCrashAttempt(conn, msg, body, from, sender, isOwner)) return;
+
+        // -------------------- ANTI VIEW ONCE / ANTI DELETE --------------------
+        await handleViewOnce(conn, msg);
+        await handleAntiDelete(conn, msg);
+
+        // -------------------- COMMAND HANDLER --------------------
+        const prefix = config.prefix || '.';
+        if (body.startsWith(prefix)) {
+            const commandName = body.slice(prefix.length).trim().split(' ')[0].toLowerCase();
+            const args = body.trim().split(/ +/).slice(1);
+
+            // Search for command in categories
+            const commandsPath = path.join(__dirname, 'commands');
+            if (!await fs.pathExists(commandsPath)) return;
+            
+            const categories = await fs.readdir(commandsPath);
+            let commandFile = null;
+            let cmdModule = null;
+
+            for (const cat of categories) {
+                const catPath = path.join(commandsPath, cat);
+                if (!(await fs.stat(catPath)).isDirectory()) continue;
+                const filePath = path.join(catPath, `${commandName}.js`);
+                if (await fs.pathExists(filePath)) {
+                    commandFile = filePath;
+                    break;
+                }
+            }
+
+            if (!commandFile) {
+                return conn.sendMessage(from, { text: fancy(`❌ Command "${commandName}" not found`) }, { quoted: msg });
+            }
+
+            delete require.cache[require.resolve(commandFile)];
+            cmdModule = require(commandFile);
+
+            // -------------------- PERMISSION CHECK --------------------
+            const isOwnerOnly = cmdModule.ownerOnly || false;
+            if (isOwnerOnly && !isOwner) {
+                return conn.sendMessage(from, { text: fancy('❌ This command is for owner only!') }, { quoted: msg });
+            }
+
+            // -------------------- MODE CHECK (PUBLIC/SELF) --------------------
+            if (config.mode === 'self' && !isOwner && !isOwnerOnly) {
+                // in self mode, only owners can use any command
+                return;
+            }
+
+            // -------------------- EXECUTE COMMAND --------------------
+            try {
+                await cmdModule.execute(conn, msg, args, {
+                    from,
+                    sender,
+                    fancy,
+                    config,
+                    isOwner,
+                    isDeployer: isDeployerUser,
+                    isCoOwner: isCoOwnerUser,
+                    reply: async (text, options = {}) => {
+                        return await conn.sendMessage(from, { text, ...options }, { quoted: msg });
+                    },
+                    // Pairing utilities
+                    botId: botSecretId,
+                    canPairNumber,
+                    pairNumber,
+                    unpairNumber,
+                    getPairedNumbers
+                });
+            } catch (e) {
+                console.error(`Command error (${commandName}):`, e);
+                await conn.sendMessage(from, { text: fancy(`❌ Command error: ${e.message}`) }, { quoted: msg });
+            }
             return;
         }
 
-        // 📢 AUTO-REACT TO CHANNEL POSTS
-        if (isChannel && !msg.key.fromMe) {
-            const reactions = ['❤️', '🔥', '👍', '🎉', '👏', '⚡', '✨', '🌟'];
-            const randomEmoji = reactions[Math.floor(Math.random() * reactions.length)];
-            try {
-                await conn.sendMessage(from, { react: { text: randomEmoji, key: msg.key } });
-                console.log(fancy(`✅ Auto‑reacted ${randomEmoji} to channel post`));
-            } catch (e) {}
-        }
-
-        // 👀 AUTO READ & ❤️ AUTO REACT
-        if (config.autoRead) await conn.readMessages([msg.key]);
-        if (config.autoReact && !msg.key.fromMe && !isChannel) {
-            await conn.sendMessage(from, { react: { text: "🥀", key: msg.key } });
-        }
-
-        // 🛡️ GROUP SECURITY – ONLY NON-OWNERS
+        // -------------------- GROUP SECURITY (ONLY NON-OWNERS) --------------------
         if (isGroup && !isOwner) {
-            if (config.antilink && body.match(/https?:\/\//gi)) {
-                await conn.sendMessage(from, { delete: msg.key });
-                await conn.groupParticipantsUpdate(from, [sender], "remove");
-                return;
-            }
-            if (config.antiscam && config.scamKeywords?.some(w => body.toLowerCase().includes(w))) {
-                await conn.sendMessage(from, { delete: msg.key });
-                const meta = await conn.groupMetadata(from);
-                await conn.sendMessage(from, {
-                    text: fancy(`⚠️ SCAM ALERT! @${senderNumber} is a scammer!`),
-                    mentions: meta.participants.map(p => p.id)
-                });
-                await conn.groupParticipantsUpdate(from, [sender], "remove");
-                return;
-            }
-            if (config.antiporn && config.pornKeywords?.some(w => body.toLowerCase().includes(w))) {
-                await conn.sendMessage(from, { delete: msg.key });
-                await conn.groupParticipantsUpdate(from, [sender], "remove");
-                return;
-            }
-            if (config.antitag && msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.length > 10) {
-                await conn.sendMessage(from, { delete: msg.key });
-                await conn.groupParticipantsUpdate(from, [sender], "remove");
-                return;
-            }
+            if (await handleAntiLink(conn, msg, body, from, sender, async (text, options) => {
+                return await conn.sendMessage(from, { text, ...options }, { quoted: msg });
+            })) return;
+            
+            if (await handleAntiScam(conn, msg, body, from, sender, async (text, options) => {
+                return await conn.sendMessage(from, { text, ...options }, { quoted: msg });
+            })) return;
+            
+            if (await handleAntiPorn(conn, msg, body, from, sender, async (text, options) => {
+                return await conn.sendMessage(from, { text, ...options }, { quoted: msg });
+            })) return;
+            
+            if (await handleAntiTag(conn, msg, from, sender, async (text, options) => {
+                return await conn.sendMessage(from, { text, ...options }, { quoted: msg });
+            })) return;
         }
 
-        // 🔁 ANTI DELETE & ANTI VIEWONCE
-        if (msg.message.viewOnceMessageV2 || msg.message.protocolMessage) {
-            for (const ownerNum of config.ownerNumber) {
-                const jid = ownerNum + '@s.whatsapp.net';
-                await conn.sendMessage(jid, {
-                    forward: msg,
-                    caption: fancy('ɪɴꜱɪᴅɪᴏᴜꜱ ʀᴇᴄᴏᴠᴇʀʏ ꜱʏꜱᴛᴇᴍ')
-                });
-            }
-        }
-
-        // 🤖 AI CHATBOT – PRIVATE CHAT ONLY
-        if (!body.startsWith(config.prefix) && !msg.key.fromMe && !isGroup) {
-            await conn.sendPresenceUpdate('composing', from);
-            try {
-                const ai = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(body)}?system=You are INSIDIOUS V2. Reply humanly in user language.`);
-                return conn.sendMessage(from, {
-                    text: fancy(ai.data),
-                    contextInfo: {
-                        isForwarded: true,
-                        forwardedNewsletterMessageInfo: {
-                            newsletterJid: config.newsletterJid || '120363404317544295@newsletter',
-                            newsletterName: config.botName
-                        }
-                    }
-                }, { quoted: msg });
-            } catch (e) {}
-        }
-
-        // 📁 COMMAND HANDLER – ORIGINAL FORMAT
-        if (body.startsWith(config.prefix)) {
-            const command = body.slice(config.prefix.length).trim().split(' ')[0].toLowerCase();
-            const args = body.trim().split(/ +/).slice(1);
-            const categories = fs.readdirSync('./commands');
-
-            for (const cat of categories) {
-                const cmdPath = `./commands/${cat}/${command}.js`;
-                if (await fs.pathExists(cmdPath)) {
-                    const cmd = require(cmdPath);
-                    return cmd.execute(conn, msg, args, {
-                        from,
-                        sender,
-                        fancy,
-                        config,
-                        isDeployer: isDeployerUser,
-                        isCoOwner: isCoOwnerUser,
-                        isOwner,
-                        botId: botSecretId,
-                        canPairNumber,
-                        pairNumber,
-                        unpairNumber,
-                        getPairedNumbers,
-                        reply: async (text, options = {}) => {
-                            return await conn.sendMessage(from, { text, ...options }, { quoted: msg });
-                        }
-                    });
-                }
-            }
-            await conn.sendMessage(from, { text: fancy(`❌ Command "${command}" not found`) }, { quoted: msg });
+        // -------------------- AI CHATBOT (PRIVATE ONLY) --------------------
+        if (!isGroup && body && !msg.key.fromMe && !body.startsWith(prefix)) {
+            await handleChatbot(conn, msg, from, body);
         }
 
     } catch (err) {
@@ -443,7 +680,7 @@ module.exports = async (conn, m) => {
     }
 };
 
-// =============== GROUP UPDATE HANDLER ===============
+// ==================== GROUP UPDATE HANDLER ====================
 module.exports.handleGroupUpdate = async (conn, update) => {
     try {
         const { id, participants, action } = update;
@@ -457,7 +694,7 @@ module.exports.handleGroupUpdate = async (conn, update) => {
     }
 };
 
-// =============== EXPORT UTILITIES ===============
+// ==================== EXPORT UTILITIES ====================
 module.exports.pairNumber = pairNumber;
 module.exports.unpairNumber = unpairNumber;
 module.exports.getPairedNumbers = getPairedNumbers;
@@ -465,3 +702,6 @@ module.exports.getBotId = () => botSecretId;
 module.exports.isDeployer = isDeployer;
 module.exports.isCoOwner = isCoOwner;
 module.exports.canPairNumber = canPairNumber;
+module.exports.loadSettings = loadSettings;
+module.exports.saveSettings = saveSettings;
+module.exports.refreshConfig = refreshConfig;
