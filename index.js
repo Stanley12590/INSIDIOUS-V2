@@ -89,13 +89,11 @@ async function startBot() {
 
         conn.ev.on('connection.update', (update) => {
             const { connection } = update;
-            
             if (connection === 'open') {
                 isConnected = true;
                 console.log(fancy("✅ Bot online – stay connected forever"));
                 if (handler?.init) handler.init(conn).catch(() => {});
             }
-            
             // 🔇 ABSOLUTELY SILENT ON CLOSE – NO LOGS, NO MESSAGES
             if (connection === 'close') {
                 isConnected = false;
@@ -106,11 +104,9 @@ async function startBot() {
         });
 
         conn.ev.on('creds.update', saveCreds);
-        
         conn.ev.on('messages.upsert', async (m) => {
             try { if (handler) await handler(conn, m); } catch {}
         });
-        
         conn.ev.on('group-participants.update', async (up) => {
             try { if (handler?.handleGroupUpdate) await handler.handleGroupUpdate(conn, up); } catch {}
         });
@@ -127,51 +123,70 @@ async function startBot() {
         console.log(fancy("🚀 Main bot started – infinite auto-reconnect, zero disconnect logs"));
     } catch (e) {
         console.error("❌ Fatal start error:", e.message);
-        // ONLY RESTART ON INITIAL FAILURE – WAIT 10 SECONDS
         setTimeout(startBot, 10000);
     }
 }
 startBot();
 
-// ==================== PAIRING – ALWAYS WORKS (EVEN DURING RECONNECT) ====================
+// ==================== 🛡️ ROBUST PAIRING – NEVER FAILS ====================
 async function requestPairingCode(number) {
+    // Ensure old session is removed to avoid corruption
+    await fs.remove('pairing_session').catch(() => {});
+    
     const { state } = await useMultiFileAuthState('pairing_session');
     const { version } = await fetchLatestBaileysVersion();
+    
     const conn = makeWASocket({
         version,
         auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })) },
         logger: pino({ level: "silent" }),
         browser: Browsers.macOS("Safari"),
         syncFullHistory: false,
-        connectTimeoutMs: 30000,
+        connectTimeoutMs: 60000, // 60 seconds timeout
         keepAliveIntervalMs: 10000,
         markOnlineOnConnect: false,
         shouldIgnoreJid: () => true,
-        maxRetryCount: 0 // NO RETRY FOR PAIRING
+        maxRetryCount: 2, // Allow up to 2 retries if connection fails
+        retryRequestDelayMs: 1000,
+        generateHighQualityLinkPreview: false
     });
 
     return new Promise((resolve, reject) => {
-        let timeout = setTimeout(() => {
-            conn.end();
-            reject(new Error("Pairing timeout"));
-        }, 30000);
+        let codeReceived = false;
+        const timeout = setTimeout(() => {
+            if (!codeReceived) {
+                conn.end();
+                reject(new Error("Pairing timeout (60s)"));
+            }
+        }, 60000);
 
         conn.ev.on('connection.update', async (update) => {
-            const { connection } = update;
-            if (connection === 'open') {
+            const { connection, lastDisconnect, isOnline } = update;
+            
+            if (connection === 'open' && isOnline !== false) {
+                // Give a small delay to ensure the socket is fully ready
+                await new Promise(resolve => setTimeout(resolve, 500));
                 try {
                     const code = await conn.requestPairingCode(number);
+                    codeReceived = true;
                     clearTimeout(timeout);
                     resolve(code);
                 } catch (err) {
                     reject(err);
                 } finally {
+                    // Close connection after a short delay
                     setTimeout(() => conn.end(), 1000);
-                    fs.remove('pairing_session').catch(() => {});
+                    setTimeout(() => fs.remove('pairing_session').catch(() => {}), 2000);
                 }
             }
-            if (connection === 'close') {
-                reject(new Error("Connection closed before pairing"));
+            
+            if (connection === 'close' && !codeReceived) {
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                if (statusCode === 429) {
+                    reject(new Error("Rate limit exceeded. Wait 5 minutes."));
+                } else {
+                    reject(new Error("Connection closed before pairing"));
+                }
             }
         });
     });
@@ -185,17 +200,20 @@ app.get('/pair', async (req, res) => {
         if (cleanNum.length < 10) return res.json({ error: "Invalid number" });
 
         let code;
-        // TRY MAIN CONNECTION FIRST, FALLBACK TO TEMPORARY CONNECTION
+        // Try main connection first if it's healthy
         if (globalConn && isConnected) {
             try {
                 code = await globalConn.requestPairingCode(cleanNum);
-            } catch {
+            } catch (err) {
+                // Fallback to temporary connection
                 code = await requestPairingCode(cleanNum);
             }
         } else {
+            // Main bot offline – use temporary connection
             code = await requestPairingCode(cleanNum);
         }
 
+        // Add to paired list if handler exists
         if (handler?.pairNumber) await handler.pairNumber(cleanNum).catch(() => {});
 
         res.json({
@@ -207,7 +225,7 @@ app.get('/pair', async (req, res) => {
     } catch (err) {
         res.json({ 
             success: false, 
-            error: "Pairing failed: " + (err.message.includes("rate") ? "Rate limit. Wait 5 min." : err.message)
+            error: "Pairing failed: " + err.message
         });
     }
 });
