@@ -1,29 +1,23 @@
-const config = require('../../config');
-
 module.exports = {
     name: "unpair",
-    description: "Unpair WhatsApp number from bot",
-    execute: async (conn, msg, args, { from, fancy, config, isOwner, reply }) => {
-        if (!isOwner) {
-            return await reply("❌ This command is for owner only!");
-        }
-        
-        if (!args[0]) {
-            return await reply(`🗑️ *UNPAIR COMMAND*\n\nUsage: ${config.prefix}unpair <number>\nExample: ${config.prefix}unpair 255712345678\n\n⚠️ *Warning:* This removes number access`);
-        }
-        
-        try {
-            const number = args[0].replace(/[^0-9]/g, '');
-            
-            if (number.length < 10) {
-                return await reply("❌ Invalid phone number format!");
-            }
-            
-            await reply(`✅ *NUMBER UNPAIRED!*\n\n📱 *Number:* ${number}\n🔓 *Status:* Removed\n🤖 *Bot:* ${config.botName}\n👑 *Action by:* Owner\n\n⚠️ This number can no longer access bot features`);
-            
-        } catch (error) {
-            console.error("Unpair error:", error);
-            await reply(`❌ Unpairing failed: ${error.message}`);
+    ownerOnly: true,
+    description: "Remove a co‑owner from the bot",
+    usage: "[phone number]",
+    
+    execute: async (conn, msg, args, { from, isOwner, reply, config, unpairNumber, getPairedNumbers }) => {
+        if (!isOwner) return reply("❌ This command is for owner only!");
+        if (!args[0]) return reply(`🗑️ Usage: ${config.prefix}unpair <number>\nExample: ${config.prefix}unpair 255712345678`);
+
+        const number = args[0].replace(/[^0-9]/g, '');
+        if (number.length < 10) return reply("❌ Invalid phone number!");
+        if (config.ownerNumber.includes(number)) return reply("❌ Cannot unpair deployer's number!");
+
+        const success = await unpairNumber(number);
+        if (success) {
+            const co = getPairedNumbers().filter(n => !config.ownerNumber.includes(n)).length;
+            reply(`✅ Number ${number} removed from co‑owners.\n👥 Remaining: ${co}/${config.maxCoOwners}`);
+        } else {
+            reply(`❌ Number ${number} not found in paired list.`);
         }
     }
 };
