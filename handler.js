@@ -2,8 +2,6 @@ const fs = require('fs-extra');
 const path = require('path');
 const axios = require('axios');
 const cron = require('node-cron');
-const ytdl = require('ytdl-core');
-const cheerio = require('cheerio');
 
 // ==================== LOAD CONFIG ====================
 let config = {};
@@ -51,7 +49,7 @@ const DEFAULT_SETTINGS = {
     autoRecording: true,
     autoBio: true,
     autostatus: true,
-    downloadStatus: true,
+    downloadStatus: false,
 
     // ========== GROUP MANAGEMENT ==========
     welcomeGoodbye: true,
@@ -70,7 +68,7 @@ const DEFAULT_SETTINGS = {
     sleepingStart: '23:00',
     sleepingEnd: '06:00',
 
-    // ========== KEYWORDS (ARRAYS) ==========
+    // ========== KEYWORDS ==========
     scamKeywords: ['win', 'prize', 'lottery', 'congratulations', 'million', 'inheritance', 'selected'],
     pornKeywords: ['xxx', 'porn', 'sex', 'nude', 'adult', '18+', 'onlyfans'],
     blockedMediaTypes: ['photo', 'video', 'sticker'],
@@ -250,59 +248,73 @@ async function isUserInRequiredGroup(conn, userJid) {
     } catch { return false; }
 }
 
-// ==================== ACTION APPLIER ====================
-async function applyAction(conn, from, sender, actionType, reason, warnIncrement = 1) {
+// ==================== ACTION APPLIER – CLEAR ENGLISH MESSAGES ====================
+async function applyAction(conn, from, sender, actionType, reason, warnIncrement = 1, customMessage = '') {
     if (!from.endsWith('@g.us')) return;
     const isAdmin = await isBotAdmin(conn, from);
     if (!isAdmin) return;
 
+    const mention = [sender];
+    const userTag = `@${sender.split('@')[0]}`;
+
     if (actionType === 'warn') {
         const warn = (warningTracker.get(sender) || 0) + warnIncrement;
         warningTracker.set(sender, warn);
-        await conn.sendMessage(from, {
-            text: fancy(`⚠️ @${sender.split('@')[0]} – ${reason} Warning ${warn}/${getGroupSetting(from, 'warnLimit')}`),
-            mentions: [sender]
-        }).catch(() => {});
-        if (warn >= getGroupSetting(from, 'warnLimit')) {
+        const warnLimit = getGroupSetting(from, 'warnLimit');
+        
+        let message = '';
+        if (customMessage) {
+            message = customMessage;
+        } else {
+            message = `⚠️ ${userTag} – You violated rule: *${reason}*. Your message has been deleted. Warning ${warn}/${warnLimit}.`;
+        }
+        
+        await conn.sendMessage(from, { text: fancy(message), mentions: mention }).catch(() => {});
+        
+        if (warn >= warnLimit) {
             await conn.groupParticipantsUpdate(from, [sender], 'remove').catch(() => {});
-            await conn.sendMessage(from, {
-                text: fancy(`🚫 @${sender.split('@')[0]} removed: ${reason} (exceeded warnings)`),
-                mentions: [sender]
-            }).catch(() => {});
+            const removeMsg = `🚫 ${userTag} – You have been removed from the group. Reason: *${reason}* (exceeded ${warnLimit} warnings).`;
+            await conn.sendMessage(from, { text: fancy(removeMsg), mentions: mention }).catch(() => {});
             warningTracker.delete(sender);
         }
     }
+    
     if (actionType === 'remove') {
         await conn.groupParticipantsUpdate(from, [sender], 'remove').catch(() => {});
-        await conn.sendMessage(from, {
-            text: fancy(`🚫 @${sender.split('@')[0]} removed: ${reason}`),
-            mentions: [sender]
-        }).catch(() => {});
+        const removeMsg = `🚫 ${userTag} – You have been removed from the group. Reason: *${reason}*.`;
+        await conn.sendMessage(from, { text: fancy(removeMsg), mentions: mention }).catch(() => {});
     }
+    
     if (actionType === 'block') {
         await conn.updateBlockStatus(sender, 'block').catch(() => {});
+        // No message sent to blocked user
     }
 }
 
-// ==================== ANTI FEATURES ====================
+// ==================== ANTI FEATURES – CLEAR ENGLISH TAGGING ====================
 async function handleAntiLink(conn, msg, body, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antilink')) return false;
     const linkRegex = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-\/a-zA-Z0-9()@:%_\+.~#?&//=]*)/gi;
     if (!linkRegex.test(body)) return false;
+    
     await conn.sendMessage(from, { delete: msg.key }).catch(() => {});
-    await applyAction(conn, from, sender, 'warn', 'Links are not allowed', 1);
+    const customMsg = `⚠️ @${sender.split('@')[0]} – You sent a *LINK*! Your message has been deleted. Links are not allowed in this group. Warning`;
+    await applyAction(conn, from, sender, 'warn', 'Sending links', 1, customMsg);
     return true;
 }
+
 async function handleAntiPorn(conn, msg, body, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antiporn')) return false;
     const keywords = getGroupSetting(from, 'pornKeywords');
     if (keywords.some(w => body.toLowerCase().includes(w))) {
         await conn.sendMessage(from, { delete: msg.key }).catch(() => {});
-        await applyAction(conn, from, sender, 'warn', 'Adult content is forbidden', 2);
+        const customMsg = `⚠️ @${sender.split('@')[0]} – You sent *ADULT/EXPLICIT CONTENT*! Your message has been deleted. This is strictly forbidden. Warning`;
+        await applyAction(conn, from, sender, 'warn', 'Adult content', 2, customMsg);
         return true;
     }
     return false;
 }
+
 async function handleAntiScam(conn, msg, body, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antiscam')) return false;
     const keywords = getGroupSetting(from, 'scamKeywords');
@@ -311,14 +323,16 @@ async function handleAntiScam(conn, msg, body, from, sender) {
         const meta = await conn.groupMetadata(from);
         const allMentions = meta.participants.map(p => p.id);
         await conn.sendMessage(from, {
-            text: fancy(`⚠️ SCAM ALERT! @${sender.split('@')[0]} – Possible scam message.`),
+            text: fancy(`⚠️ *SCAM ALERT!* @${sender.split('@')[0]} sent a message that appears to be a scam. The message has been deleted. Do not engage.`),
             mentions: allMentions
         }).catch(() => {});
-        await applyAction(conn, from, sender, 'warn', 'Scam content', 2);
+        const customMsg = `⚠️ @${sender.split('@')[0]} – You sent a *SCAM MESSAGE*! Your message has been deleted. This puts members at risk. Warning`;
+        await applyAction(conn, from, sender, 'warn', 'Scam content', 2, customMsg);
         return true;
     }
     return false;
 }
+
 async function handleAntiMedia(conn, msg, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antimedia')) return false;
     const blocked = getGroupSetting(from, 'blockedMediaTypes') || [];
@@ -327,26 +341,41 @@ async function handleAntiMedia(conn, msg, from, sender) {
     const isSticker = !!msg.message?.stickerMessage;
     const isAudio = !!msg.message?.audioMessage;
     const isDocument = !!msg.message?.documentMessage;
+    
+    let mediaType = '';
+    if (isPhoto) mediaType = 'PHOTO';
+    else if (isVideo) mediaType = 'VIDEO';
+    else if (isSticker) mediaType = 'STICKER';
+    else if (isAudio) mediaType = 'AUDIO';
+    else if (isDocument) mediaType = 'DOCUMENT';
+    
     if ((blocked.includes('photo') && isPhoto) ||
         (blocked.includes('video') && isVideo) ||
         (blocked.includes('sticker') && isSticker) ||
         (blocked.includes('audio') && isAudio) ||
         (blocked.includes('document') && isDocument) ||
         (blocked.includes('all') && (isPhoto || isVideo || isSticker || isAudio || isDocument))) {
+        
         await conn.sendMessage(from, { delete: msg.key }).catch(() => {});
-        await applyAction(conn, from, sender, 'warn', 'Media type not allowed', 1);
+        const customMsg = `⚠️ @${sender.split('@')[0]} – You sent a *${mediaType}*! This media type is not allowed. Your message has been deleted. Warning`;
+        await applyAction(conn, from, sender, 'warn', `Sending ${mediaType}`, 1, customMsg);
         return true;
     }
     return false;
 }
+
 async function handleAntiTag(conn, msg, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antitag')) return false;
     const mentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
     if (!mentions || mentions.length < getGroupSetting(from, 'maxTags')) return false;
+    
     await conn.sendMessage(from, { delete: msg.key }).catch(() => {});
-    await applyAction(conn, from, sender, 'warn', 'Excessive tagging', 1);
+    const customMsg = `⚠️ @${sender.split('@')[0]} – You tagged ${mentions.length} people! Excessive tagging is not allowed. Your message has been deleted. Warning`;
+    await applyAction(conn, from, sender, 'warn', 'Excessive tagging', 1, customMsg);
     return true;
 }
+
+// ==================== OTHER ANTI FEATURES ====================
 async function handleViewOnce(conn, msg) {
     if (!getGroupSetting('global', 'antiviewonce')) return false;
     if (!msg.message?.viewOnceMessageV2 && !msg.message?.viewOnceMessage) return false;
@@ -362,6 +391,7 @@ async function handleViewOnce(conn, msg) {
     }
     return true;
 }
+
 async function handleAntiDelete(conn, msg) {
     if (!getGroupSetting('global', 'antidelete')) return false;
     if (!msg.message?.protocolMessage || msg.message.protocolMessage.type !== 5) return false;
@@ -376,6 +406,7 @@ async function handleAntiDelete(conn, msg) {
     messageStore.delete(msg.message.protocolMessage.key.id);
     return true;
 }
+
 async function handleAntiBugs(conn, msg, from, sender) {
     if (!globalSettings.antibugs) return false;
     const body = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
@@ -397,6 +428,7 @@ async function handleAntiBugs(conn, msg, from, sender) {
     }
     return false;
 }
+
 async function handleAntiSpam(conn, msg, from, sender) {
     if (!getGroupSetting(from, 'antispam')) return false;
     const now = Date.now();
@@ -412,11 +444,13 @@ async function handleAntiSpam(conn, msg, from, sender) {
     spamTracker.set(key, record);
     if (record.count > limit) {
         await conn.sendMessage(from, { delete: msg.key }).catch(() => {});
-        await applyAction(conn, from, sender, 'warn', 'Spamming', 1);
+        const customMsg = `⚠️ @${sender.split('@')[0]} – You are sending messages too fast! Please slow down. Warning`;
+        await applyAction(conn, from, sender, 'warn', 'Spamming', 1, customMsg);
         return true;
     }
     return false;
 }
+
 async function handleAntiCall(conn, call) {
     if (!globalSettings.anticall) return;
     await conn.rejectCall(call.id, call.from).catch(() => {});
@@ -454,6 +488,7 @@ async function handleAutoStatus(conn, statusMsg) {
         }
     }
 }
+
 async function updateAutoBio(conn) {
     if (!globalSettings.autoBio) return;
     const uptime = process.uptime();
@@ -463,6 +498,7 @@ async function updateAutoBio(conn) {
     await conn.updateProfileStatus(bio).catch(() => {});
 }
 setInterval(() => { if (globalSettings.autoBio) updateAutoBio(conn); }, 60000);
+
 async function handleAutoBlockCountry(conn, participant) {
     if (!globalSettings.autoblockCountry) return false;
     const blocked = globalSettings.blockedCountries || [];
@@ -536,7 +572,7 @@ async function autoRemoveInactive(conn) {
         }
         if (toRemove.length) {
             await conn.groupParticipantsUpdate(jid, toRemove, 'remove').catch(() => {});
-            await conn.sendMessage(jid, { text: fancy(`🧹 Removed ${toRemove.length} inactive members (${inactiveDays} days no activity).`) }).catch(() => {});
+            await conn.sendMessage(jid, { text: fancy(`🧹 Removed ${toRemove.length} inactive members (${inactiveDays} days without activity).`) }).catch(() => {});
         }
     }
 }
@@ -609,41 +645,6 @@ async function handleChatbot(conn, msg, from, body, sender) {
     } catch { return false; }
 }
 
-// ==================== DOWNLOADER ====================
-async function handleDownload(conn, msg, args, type) {
-    const url = args[0];
-    if (!url) return msg.reply(fancy(`❌ Please provide a URL`));
-    try {
-        if (type === 'yt' || type === 'ytaudio' || type === 'ytvideo') {
-            const info = await ytdl.getInfo(url);
-            const format = type === 'ytaudio' ? ytdl.chooseFormat(info.formats, { filter: 'audioonly' }) : ytdl.chooseFormat(info.formats, { quality: 'highest' });
-            const stream = ytdl(url, { format });
-            const buffer = await streamToBuffer(stream);
-            await conn.sendMessage(msg.key.remoteJid, {
-                [type === 'ytaudio' ? 'audio' : 'video']: buffer,
-                mimetype: type === 'ytaudio' ? 'audio/mpeg' : 'video/mp4',
-                fileName: `${info.videoDetails.title}.${type === 'ytaudio' ? 'mp3' : 'mp4'}`,
-                caption: fancy(`✅ Downloaded: ${info.videoDetails.title}`)
-            }, { quoted: msg }).catch(() => {});
-        } else if (type === 'tiktok') {
-            const res = await axios.get(`https://api.tikmate.cc/?url=${encodeURIComponent(url)}`);
-            const videoUrl = res.data.video;
-            const videoBuffer = await axios.get(videoUrl, { responseType: 'arraybuffer' });
-            await conn.sendMessage(msg.key.remoteJid, { video: videoBuffer.data, caption: fancy('✅ TikTok video') }, { quoted: msg }).catch(() => {});
-        }
-    } catch (e) {
-        await msg.reply(fancy(`❌ Download failed: ${e.message}`));
-    }
-}
-function streamToBuffer(stream) {
-    return new Promise((resolve, reject) => {
-        const chunks = [];
-        stream.on('data', chunk => chunks.push(chunk));
-        stream.on('end', () => resolve(Buffer.concat(chunks)));
-        stream.on('error', reject);
-    });
-}
-
 // ==================== MAIN HANDLER ====================
 module.exports = async (conn, m) => {
     try {
@@ -709,11 +710,6 @@ module.exports = async (conn, m) => {
                 await handleAutoBlockCountry(conn, p);
             }
         }
-
-        // ---- COMMANDS ----
-        // (commands are handled by the command handler; this is just the main event loop)
-        // The command handler is separate; this file only provides the anti-features and utilities.
-        // We call the command handler from index.js, not here.
 
         // ---- GROUP SECURITY (non-owners) ----
         if (isGroup && !isOwner) {
@@ -821,10 +817,10 @@ module.exports.loadGlobalSettings = loadGlobalSettings;
 module.exports.saveGlobalSettings = saveGlobalSettings;
 module.exports.getGroupSetting = getGroupSetting;
 module.exports.setGroupSetting = setGroupSetting;
-module.exports.loadSettings = loadGlobalSettings;  // alias for command
-module.exports.saveSettings = saveGlobalSettings;  // alias for command
+module.exports.loadSettings = loadGlobalSettings;
+module.exports.saveSettings = saveGlobalSettings;
 module.exports.refreshConfig = async () => {
     await loadGlobalSettings();
     await loadGroupSettings();
-    Object.assign(globalSettings, await loadGlobalSettings()); // ensure fresh
+    Object.assign(globalSettings, await loadGlobalSettings());
 };
