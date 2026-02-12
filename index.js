@@ -5,7 +5,15 @@ const mongoose = require("mongoose");
 const path = require("path");
 const fs = require('fs-extra');
 
-// ✅ **FANCY FUNCTION**
+// ==================== LOAD HANDLER (kwa bot ID na pairing) ====================
+let handler = {};
+try {
+    handler = require('./handler');
+} catch (e) {
+    console.log('❌ Handler not found, some features may be missing');
+}
+
+// ==================== FANCY FUNCTION ====================
 function fancy(text) {
     if (!text || typeof text !== 'string') return text;
     const fancyMap = {
@@ -22,7 +30,7 @@ function fancy(text) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ **MONGODB – INAVUMILIA KUSHINDWA**
+// ==================== MONGODB (OPTIONAL) ====================
 console.log(fancy("🔗 Connecting to MongoDB..."));
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
 mongoose.connect(MONGODB_URI, {
@@ -36,21 +44,21 @@ mongoose.connect(MONGODB_URI, {
     console.log(fancy("💡 Error: " + err.message));
 });
 
-// ✅ **MIDDLEWARE**
+// ==================== MIDDLEWARE ====================
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 fs.ensureDirSync(path.join(__dirname, 'public'));
 
-// ✅ **WEB ROUTES – ORIGINAL**
+// ==================== WEB ROUTES ====================
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 
-// ✅ **GLOBAL VARIABLES**
+// ==================== GLOBAL VARIABLES ====================
 let globalConn = null;
 let isConnected = false;
 let botStartTime = Date.now();
 
-// ✅ **LOAD CONFIG**
+// ==================== LOAD CONFIG ====================
 let config = {};
 try {
     config = require('./config');
@@ -65,14 +73,12 @@ try {
         workMode: 'public',
         newsletterJid: '120363404317544295@newsletter',
         botImage: 'https://files.catbox.moe/insidious-alive.jpg',
-        menuImage: 'https://files.catbox.moe/irqrap.jpg'
+        menuImage: 'https://files.catbox.moe/irqrap.jpg',
+        maxCoOwners: 2
     };
 }
 
-// ✅ **LOAD HANDLER (KAMILI)**
-const handler = require('./handler');
-
-// ✅ **BOT START – NO QR WARNINGS, NO AUTO-RECONNECT**
+// ==================== BOT START – NO AUTO-RECONNECT ====================
 async function startBot() {
     try {
         console.log(fancy("🚀 Starting INSIDIOUS..."));
@@ -85,7 +91,7 @@ async function startBot() {
                 creds: state.creds, 
                 keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })) 
             },
-            logger: pino({ level: "silent" }),
+            logger: pino({ level: "silent" }), // HAKUNA QR WARNINGS
             browser: Browsers.macOS("Safari"),
             syncFullHistory: false,
             connectTimeoutMs: 60000,
@@ -98,16 +104,18 @@ async function startBot() {
 
         conn.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
+            
             if (connection === 'open') {
                 console.log(fancy("👹 INSIDIOUS: THE LAST KEY ACTIVATED"));
                 console.log(fancy("✅ Bot is now online"));
                 isConnected = true;
+                
                 const botName = conn.user?.name || config.botName;
                 const botNumber = conn.user?.id?.split(':')[0] || 'Unknown';
                 console.log(fancy(`🤖 Name: ${botName}`));
                 console.log(fancy(`📞 Number: ${botNumber}`));
                 
-                // ✅ INIT HANDLER (welcome, auto-follow, pairing system, n.k.)
+                // ✅ INIT HANDLER (WELCOME, AUTO-FOLLOW, PAIRING SYSTEM)
                 try {
                     if (handler && typeof handler.init === 'function') {
                         await handler.init(conn);
@@ -116,10 +124,12 @@ async function startBot() {
                     console.error(fancy("❌ Handler init error:"), e.message);
                 }
             }
+            
             if (connection === 'close') {
                 console.log(fancy("🔌 Connection closed"));
                 isConnected = false;
-                // ✅ HAKUNA AUTO-RECONNECT – HOSTING ITARUDISHA
+                // ✅ HAKUNA AUTO-RECONNECT – HOSTING ITARUDISHA BOT
+                console.log(fancy("⚡ Bot stopped – waiting for hosting restart"));
             }
         });
 
@@ -142,13 +152,14 @@ async function startBot() {
         console.log(fancy("🚀 Bot ready – Web pairing active"));
     } catch (error) {
         console.error("Start error:", error.message);
+        // ✅ HAKUNA AUTO-RECONNECT – TUNAACHA TU
     }
 }
 startBot();
 
-// ==================== 🌐 WEB PAIRING ENDPOINTS (KAMA AWALI KABISA) ====================
+// ==================== 🌐 WEB PAIRING ENDPOINTS ====================
 
-// ✅ **8-DIGIT PAIRING CODE**
+// ✅ GET 8-DIGIT PAIRING CODE
 app.get('/pair', async (req, res) => {
     try {
         let num = req.query.num;
@@ -164,6 +175,12 @@ app.get('/pair', async (req, res) => {
         }
         console.log(fancy(`🔑 Web pairing requested for: ${cleanNum}`));
         const code = await globalConn.requestPairingCode(cleanNum);
+        
+        // Optional: save to handler if available
+        if (handler && handler.pairNumber) {
+            await handler.pairNumber(cleanNum).catch(() => {});
+        }
+        
         res.json({
             success: true,
             code: code,
@@ -176,7 +193,7 @@ app.get('/pair', async (req, res) => {
     }
 });
 
-// ✅ **UNPAIR ENDPOINT (KAMA AWALI)**
+// ✅ UNPAIR ENDPOINT
 app.get('/unpair', async (req, res) => {
     try {
         let num = req.query.num;
@@ -187,29 +204,45 @@ app.get('/unpair', async (req, res) => {
         if (cleanNum.length < 10) {
             return res.json({ error: "Invalid number" });
         }
-        // Kwa sasa tu simulate – unaweza kuunganisha na handler.unpairNumber kama unataka
-        res.json({
-            success: true,
-            message: `Number ${cleanNum} unpaired successfully`
-        });
+        if (config.ownerNumber?.includes(cleanNum)) {
+            return res.json({ error: "Cannot unpair deployer's number" });
+        }
+        if (handler && handler.unpairNumber) {
+            const success = await handler.unpairNumber(cleanNum);
+            if (success) {
+                res.json({ success: true, message: `Number ${cleanNum} unpaired successfully` });
+            } else {
+                res.json({ success: false, error: "Number not paired" });
+            }
+        } else {
+            res.json({ success: true, message: `Number ${cleanNum} unpaired successfully (simulated)` });
+        }
     } catch (err) {
         console.error("Unpair error:", err.message);
         res.json({ success: false, error: "Failed: " + err.message });
     }
 });
 
-// ✅ **PAIRED LIST (KAMA AWALI)**
+// ✅ PAIRED LIST ENDPOINT
 app.get('/paired', (req, res) => {
     try {
-        const allPaired = handler.getPairedNumbers ? handler.getPairedNumbers() : [];
-        const deployer = config.ownerNumber || [];
-        const coOwners = allPaired.filter(n => !deployer.includes(n));
+        let deployer = config.ownerNumber || [];
+        let coOwners = [];
+        let botId = null;
+        let maxCoOwners = config.maxCoOwners || 2;
+        
+        if (handler && handler.getPairedNumbers) {
+            const all = handler.getPairedNumbers();
+            coOwners = all.filter(n => !deployer.includes(n));
+            botId = handler.getBotId ? handler.getBotId() : null;
+        }
+        
         res.json({
-            botId: handler.getBotId ? handler.getBotId() : null,
+            botId: botId,
             deployer: deployer,
             coOwners: coOwners,
             count: coOwners.length,
-            max: config.maxCoOwners || 2
+            max: maxCoOwners
         });
     } catch (err) {
         console.error("Paired list error:", err.message);
@@ -217,9 +250,9 @@ app.get('/paired', (req, res) => {
     }
 });
 
-// ==================== 🌐 WEB ENDPOINTS – HEALTH & INFO ====================
+// ==================== 🌐 WEB UTILITY ENDPOINTS ====================
 
-// ✅ **HEALTH CHECK**
+// ✅ HEALTH CHECK (KWA HOSTING)
 app.get('/health', (req, res) => {
     const uptime = process.uptime();
     res.json({
@@ -230,19 +263,27 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ✅ **BOT INFO – INA BOT ID KUTOKA HANDLER**
+// ✅ BOT INFO
 app.get('/botinfo', (req, res) => {
-    if (!globalConn?.user) return res.json({ error: "Bot not connected" });
+    if (!globalConn?.user) {
+        return res.json({ 
+            botName: config.botName,
+            botNumber: 'Unknown',
+            botId: handler?.getBotId ? handler.getBotId() : null,
+            connected: false,
+            uptime: Date.now() - botStartTime
+        });
+    }
     res.json({
         botName: globalConn.user?.name || config.botName,
         botNumber: globalConn.user?.id?.split(':')[0] || 'Unknown',
-        botId: handler.getBotId ? handler.getBotId() : null,
+        botId: handler?.getBotId ? handler.getBotId() : null,
         connected: isConnected,
         uptime: Date.now() - botStartTime
     });
 });
 
-// ✅ **KEEP-ALIVE (KWA RENDER/RAILWAY)**
+// ✅ KEEP-ALIVE (RENDER/RAILWAY)
 app.get('/keep-alive', (req, res) => {
     res.json({
         status: 'alive',
@@ -251,7 +292,7 @@ app.get('/keep-alive', (req, res) => {
     });
 });
 
-// ✅ **START SERVER**
+// ==================== START SERVER ====================
 app.listen(PORT, () => {
     console.log(fancy(`🌐 Web Interface: http://localhost:${PORT}`));
     console.log(fancy(`🔗 8-digit Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
@@ -263,8 +304,8 @@ app.listen(PORT, () => {
     console.log(fancy("👑 Developer: STANYTZ"));
     console.log(fancy("📅 Version: 2.1.1 | Year: 2025"));
     console.log(fancy("✅ WEB PAIRING ACTIVE (8-digit code)"));
-    console.log(fancy("⚡ NO AUTO-RECONNECT LOOPS"));
-    console.log(fancy("🤖 HANDLER: COMPLETE & WORKING"));
+    console.log(fancy("⚡ NO AUTO-RECONNECT – BOT STOPS ON DISCONNECT"));
+    console.log(fancy("🤖 HANDLER INTEGRATED"));
 });
 
 module.exports = app;
