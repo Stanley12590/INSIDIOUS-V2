@@ -10,7 +10,7 @@ config.ownerNumber = (config.ownerNumber || [])
     .map(num => num.replace(/[^0-9]/g, ''))
     .filter(num => num.length >= 10);
 
-// ==================== DEFAULT SETTINGS (ALL FEATURES) ====================
+// ==================== DEFAULT SETTINGS (ALL FEATURES ON) ====================
 const DEFAULT_SETTINGS = {
     // ANTI FEATURES
     antilink: true,
@@ -57,6 +57,7 @@ async function refreshConfig() {
     settingsCache = await loadSettings();
     Object.assign(config, settingsCache);
 }
+// initial load
 refreshConfig();
 
 // ==================== FANCY FUNCTION ====================
@@ -134,7 +135,9 @@ async function pairNumber(number) {
 async function unpairNumber(number) {
     const clean = number.replace(/[^0-9]/g, '');
     if (config.ownerNumber.includes(clean)) return false;
-    return pairedNumbers.delete(clean) ? (await savePairedNumbers(), true) : false;
+    const deleted = pairedNumbers.delete(clean);
+    if (deleted) await savePairedNumbers();
+    return deleted;
 }
 
 function getPairedNumbers() {
@@ -231,7 +234,8 @@ function storeMessage(msg) {
 // ==================== WELCOME/GOODBYE ====================
 async function handleWelcome(conn, participant, groupJid, action = 'add') {
     if (!config.welcomeGoodbye) return;
-    if (!await isBotAdmin(conn, groupJid)) return;
+    const isAdmin = await isBotAdmin(conn, groupJid);
+    if (!isAdmin) return;
     const name = await getContactName(conn, participant);
     const group = await getGroupName(conn, groupJid);
     const text = action === 'add'
@@ -275,7 +279,7 @@ async function sendWelcomeToDeployer(conn) {
 💾 *Version:* 2.1.1 | Year: 2025
 `;
         await conn.sendMessage(jid, {
-            image: { url: config.aliveImage || 'https://files.catbox.moe/mfngio.png' },
+            image: { url: config.aliveImage || config.botImage || 'https://files.catbox.moe/insidious-alive.jpg' },
             caption: msg,
             contextInfo: {
                 isForwarded: true,
@@ -289,15 +293,31 @@ async function sendWelcomeToDeployer(conn) {
     } catch {}
 }
 
-// ==================== ANTI FEATURES (WARN + KICK) ====================
+// ==================== ANTI FEATURES (REAL DELETE + KICK) ====================
 async function handleAntiLink(conn, msg, body, from, sender, reply) {
-    if (!config.antilink || !from.endsWith('@g.us')) return false;
-    if (!body.match(/https?:\/\//i) && !body.match(/chat\.whatsapp\.com/i) && !body.match(/wa\.me/i)) return false;
-    if (!await isBotAdmin(conn, from)) return false;
+    if (!from.endsWith('@g.us')) return false;
+    await refreshConfig(); // use latest setting
+    if (!config.antilink) return false;
+
+    // Comprehensive link regex
+    const linkRegex = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-\/a-zA-Z0-9()@:%_\+.~#?&//=]*)/gi;
+    if (!linkRegex.test(body)) return false;
+
+    const isAdmin = await isBotAdmin(conn, from);
+    if (!isAdmin) {
+        await reply(fancy(`⚠️ *Bot not admin!* Promote me to admin to delete links.`));
+        return false;
+    }
 
     const warn = (warningTracker.get(sender) || 0) + 1;
     warningTracker.set(sender, warn);
-    await conn.sendMessage(from, { delete: msg.key });
+
+    // Delete the offending message
+    try {
+        await conn.sendMessage(from, { delete: msg.key });
+    } catch (e) {
+        console.error('Delete failed:', e);
+    }
 
     if (warn >= 3) {
         await conn.groupParticipantsUpdate(from, [sender], 'remove');
@@ -310,30 +330,44 @@ async function handleAntiLink(conn, msg, body, from, sender, reply) {
 }
 
 async function handleAntiScam(conn, msg, body, from, sender, reply) {
-    if (!config.antiscam || !from.endsWith('@g.us')) return false;
+    if (!from.endsWith('@g.us')) return false;
+    await refreshConfig();
+    if (!config.antiscam) return false;
     if (!config.scamKeywords?.some(w => body.toLowerCase().includes(w))) return false;
-    if (!await isBotAdmin(conn, from)) return false;
+
+    const isAdmin = await isBotAdmin(conn, from);
+    if (!isAdmin) {
+        await reply(fancy(`⚠️ *Bot not admin!* Promote me to admin to delete scam messages.`));
+        return false;
+    }
 
     const warn = (warningTracker.get(sender) || 0) + 1;
     warningTracker.set(sender, warn);
     await conn.sendMessage(from, { delete: msg.key });
     const meta = await conn.groupMetadata(from);
-    const all = meta.participants.map(p => p.id);
+    const allMentions = meta.participants.map(p => p.id);
 
     if (warn >= 3) {
         await conn.groupParticipantsUpdate(from, [sender], 'remove');
-        await reply(fancy(`🚫 @${sender.split('@')[0]} removed: Scam (3 warnings)`), { mentions: all });
+        await reply(fancy(`🚫 @${sender.split('@')[0]} removed: Scam (3 warnings)`), { mentions: allMentions });
         warningTracker.delete(sender);
     } else {
-        await reply(fancy(`⚠️ SCAM ALERT! @${sender.split('@')[0]} – Warning ${warn}/3`), { mentions: all });
+        await reply(fancy(`⚠️ SCAM ALERT! @${sender.split('@')[0]} – Warning ${warn}/3`), { mentions: allMentions });
     }
     return true;
 }
 
 async function handleAntiPorn(conn, msg, body, from, sender, reply) {
-    if (!config.antiporn || !from.endsWith('@g.us')) return false;
+    if (!from.endsWith('@g.us')) return false;
+    await refreshConfig();
+    if (!config.antiporn) return false;
     if (!config.pornKeywords?.some(w => body.toLowerCase().includes(w))) return false;
-    if (!await isBotAdmin(conn, from)) return false;
+
+    const isAdmin = await isBotAdmin(conn, from);
+    if (!isAdmin) {
+        await reply(fancy(`⚠️ *Bot not admin!* Promote me to admin to delete adult content.`));
+        return false;
+    }
 
     const warn = (warningTracker.get(sender) || 0) + 1;
     warningTracker.set(sender, warn);
@@ -350,10 +384,18 @@ async function handleAntiPorn(conn, msg, body, from, sender, reply) {
 }
 
 async function handleAntiTag(conn, msg, from, sender, reply) {
-    if (!config.antitag || !from.endsWith('@g.us')) return false;
+    if (!from.endsWith('@g.us')) return false;
+    await refreshConfig();
+    if (!config.antitag) return false;
+
     const mentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
-    if (!mentions || mentions.length < 5) return false;
-    if (!await isBotAdmin(conn, from)) return false;
+    if (!mentions || mentions.length < 5) return false; // allow up to 5 tags
+
+    const isAdmin = await isBotAdmin(conn, from);
+    if (!isAdmin) {
+        await reply(fancy(`⚠️ *Bot not admin!* Promote me to admin to delete excessive tagging.`));
+        return false;
+    }
 
     const warn = (warningTracker.get(sender) || 0) + 1;
     warningTracker.set(sender, warn);
@@ -371,6 +413,7 @@ async function handleAntiTag(conn, msg, from, sender, reply) {
 
 // ==================== ANTI VIEWONCE & ANTI DELETE ====================
 async function handleViewOnce(conn, msg) {
+    await refreshConfig();
     if (!config.antiviewonce) return false;
     if (!msg.message?.viewOnceMessageV2 && !msg.message?.viewOnceMessage) return false;
     for (const num of config.ownerNumber) {
@@ -380,6 +423,7 @@ async function handleViewOnce(conn, msg) {
 }
 
 async function handleAntiDelete(conn, msg) {
+    await refreshConfig();
     if (!config.antidelete) return false;
     if (!msg.message?.protocolMessage || msg.message.protocolMessage.type !== 5) return false;
     const stored = messageStore.get(msg.message.protocolMessage.key.id);
@@ -399,12 +443,17 @@ async function autoReactToChannel(conn, msg, from) {
     if (!from.endsWith('@newsletter') || msg.key.fromMe) return;
     const emojis = ['❤️', '🔥', '👍', '🎉', '👏', '⚡', '✨', '🌟'];
     const emoji = emojis[Math.floor(Math.random() * emojis.length)];
-    try { await conn.sendMessage(from, { react: { text: emoji, key: msg.key } }); } catch {}
+    try {
+        await conn.sendMessage(from, { react: { text: emoji, key: msg.key } });
+        console.log(fancy(`✅ Auto‑reacted ${emoji} to channel post`));
+    } catch {}
 }
 
 // ==================== AI CHATBOT ====================
 async function handleChatbot(conn, msg, from, body) {
-    if (!config.chatbot || msg.key.fromMe || from.endsWith('@g.us')) return false;
+    await refreshConfig();
+    if (!config.chatbot) return false;
+    if (msg.key.fromMe || from.endsWith('@g.us')) return false;
     await conn.sendPresenceUpdate('composing', from);
     try {
         const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(body)}?system=You are INSIDIOUS V2. Reply humanly in user language.`);
@@ -426,7 +475,10 @@ async function handleChatbot(conn, msg, from, body) {
 async function handleCrash(conn, msg, body, from, sender, isOwner) {
     if (body.length > 25000 && !isOwner) {
         await conn.sendMessage(from, { delete: msg.key });
-        if (from.endsWith('@g.us')) await conn.groupParticipantsUpdate(from, [sender], 'remove');
+        if (from.endsWith('@g.us')) {
+            const isAdmin = await isBotAdmin(conn, from);
+            if (isAdmin) await conn.groupParticipantsUpdate(from, [sender], 'remove');
+        }
         await conn.updateBlockStatus(sender, 'block');
         return true;
     }
@@ -452,6 +504,9 @@ module.exports = async (conn, m) => {
         if (!m.messages?.[0]) return;
         let msg = m.messages[0];
         if (!msg.message || msg.key.remoteJid === 'status@broadcast') return;
+
+        // Always use latest settings
+        await refreshConfig();
 
         msg = enhanceMessage(conn, msg);
 
@@ -497,11 +552,8 @@ module.exports = async (conn, m) => {
                         delete require.cache[require.resolve(filePath)];
                         const command = require(filePath);
 
-                        // ✅ MODE ENFORCEMENT (PUBLIC / SELF)
-                        if (config.mode === 'self' && !isOwner) {
-                            // In self mode, only owners can use any command
-                            return;
-                        }
+                        // MODE ENFORCEMENT
+                        if (config.mode === 'self' && !isOwner) return;
 
                         if (command.ownerOnly && !isOwner) {
                             await msg.reply(fancy('❌ This command is for owner only!'));
@@ -537,6 +589,7 @@ module.exports = async (conn, m) => {
             return;
         }
 
+        // GROUP SECURITY – only non‑owners
         if (isGroup && !isOwner) {
             const replyFn = msg.reply;
             if (await handleAntiLink(conn, msg, body, from, sender, replyFn)) return;
@@ -545,6 +598,7 @@ module.exports = async (conn, m) => {
             if (await handleAntiTag(conn, msg, from, sender, replyFn)) return;
         }
 
+        // AI CHATBOT – private chat only
         if (!isGroup && body && !msg.key.fromMe && !body.startsWith(prefix)) {
             await handleChatbot(conn, msg, from, body);
         }
@@ -556,6 +610,7 @@ module.exports = async (conn, m) => {
 
 // ==================== GROUP UPDATE HANDLER ====================
 module.exports.handleGroupUpdate = async (conn, update) => {
+    await refreshConfig(); // ensure welcomeGoodbye setting is current
     const { id, participants, action } = update;
     if (action === 'add' || action === 'remove') {
         for (const p of participants) await handleWelcome(conn, p, id, action);
