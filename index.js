@@ -1,11 +1,11 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const mongoose = require("mongoose");
 const path = require("path");
 const fs = require('fs-extra');
 
-// ==================== HANDLER (KWA BOT ID & PAIRING) ====================
+// ==================== HANDLER ====================
 let handler = {};
 try { handler = require('./handler'); } catch {}
 
@@ -26,7 +26,7 @@ function fancy(text) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ==================== MONGODB (SI LAZIMA) ====================
+// ==================== MONGODB (OPTIONAL) ====================
 console.log(fancy("🔗 Connecting to MongoDB..."));
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious";
 mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 30000 })
@@ -62,7 +62,7 @@ try { config = require('./config'); } catch {
     };
 }
 
-// ==================== BOT START – NO LOGS, NO RECONNECT ====================
+// ==================== BOT START – SINGLE INSTANCE, NO RESTART ====================
 async function startBot() {
     try {
         const { state, saveCreds } = await useMultiFileAuthState('insidious_session');
@@ -75,7 +75,11 @@ async function startBot() {
             syncFullHistory: false,
             connectTimeoutMs: 60000,
             keepAliveIntervalMs: 10000,
-            markOnlineOnConnect: true
+            markOnlineOnConnect: true,
+            // 🚫 NO AUTO-RECONNECT
+            retryRequestDelayMs: 500,
+            maxRetryCount: 0,
+            shouldIgnoreJid: () => true
         });
         globalConn = conn;
         botStartTime = Date.now();
@@ -87,10 +91,11 @@ async function startBot() {
                 console.log(fancy("✅ Bot online"));
                 if (handler?.init) handler.init(conn).catch(() => {});
             }
+            // 🚫 WHEN CLOSE: ABSOLUTELY NO LOG, NO RECONNECT, JUST SILENCE
             if (connection === 'close') {
                 isConnected = false;
                 globalConn = null;
-                // ❌ HAKUNA LOG YA "CONNECTION CLOSED" – HOSTING ITARUDISHA
+                // NOTHING PRINTED – COMPLETE SILENCE
             }
         });
 
@@ -98,15 +103,17 @@ async function startBot() {
         conn.ev.on('messages.upsert', async (m) => { try { if (handler) await handler(conn, m); } catch {} });
         conn.ev.on('group-participants.update', async (up) => { try { if (handler?.handleGroupUpdate) await handler.handleGroupUpdate(conn, up); } catch {} });
 
-        console.log(fancy("🚀 Bot ready"));
-    } catch (e) { console.error("Start error:", e.message); }
+        console.log(fancy("🚀 Bot started – no auto-reconnect"));
+    } catch (e) {
+        console.error("❌ Start error:", e.message);
+    }
 }
 startBot();
 
-// ==================== 🌐 WEB PAIRING (8-DIGIT CODE) – STABLE KABISA ====================
+// ==================== PAIRING ENDPOINT – ONLY IF CONNECTED ====================
 app.get('/pair', async (req, res) => {
     if (!isConnected || !globalConn) {
-        return res.json({ success: false, error: "⏳ Bot is offline. Please wait 10 seconds and try again." });
+        return res.json({ success: false, error: "⏳ Bot is offline. Wait and try again." });
     }
     try {
         let num = req.query.num;
@@ -127,7 +134,7 @@ app.get('/pair', async (req, res) => {
     }
 });
 
-// ✅ UNPAIR
+// ==================== UNPAIR ====================
 app.get('/unpair', async (req, res) => {
     try {
         let num = req.query.num;
@@ -144,7 +151,7 @@ app.get('/unpair', async (req, res) => {
     }
 });
 
-// ✅ PAIRED LIST
+// ==================== PAIRED LIST ====================
 app.get('/paired', (req, res) => {
     try {
         let deployer = config.ownerNumber || [];
@@ -160,7 +167,7 @@ app.get('/paired', (req, res) => {
     }
 });
 
-// ==================== 🌐 UTILITY ENDPOINTS ====================
+// ==================== HEALTH & INFO ====================
 app.get('/health', (req, res) => {
     res.json({
         status: 'healthy',
@@ -186,8 +193,8 @@ app.get('/keep-alive', (req, res) => res.json({ status: 'alive', bot: config.bot
 app.listen(PORT, () => {
     console.log(fancy(`🌐 Web: http://localhost:${PORT}`));
     console.log(fancy(`🔗 Pair: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
-    console.log(fancy(`✅ NO AUTO-RECONNECT`));
-    console.log(fancy(`🤖 HANDLER READY`));
+    console.log(fancy(`✅ AUTO-RECONNECT: OFF`));
+    console.log(fancy(`🤖 INSIDIOUS:THE LAST KEY – SECURITY ACTIVE`));
 });
 
 module.exports = app;
