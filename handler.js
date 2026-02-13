@@ -229,6 +229,14 @@ async function isBotAdmin(conn, groupJid) {
         return meta.participants.some(p => p.id === conn.user.id && (p.admin === 'admin' || p.admin === 'superadmin'));
     } catch { return false; }
 }
+// ✅ NEW: Check if a specific participant is a group admin
+async function isParticipantAdmin(conn, groupJid, participantJid) {
+    try {
+        const meta = await conn.groupMetadata(groupJid);
+        const participant = meta.participants.find(p => p.id === participantJid);
+        return participant ? (participant.admin === 'admin' || participant.admin === 'superadmin') : false;
+    } catch { return false; }
+}
 function enhanceMessage(conn, msg) {
     if (!msg) return msg;
     if (!msg.reply) {
@@ -630,7 +638,7 @@ async function handleChatbot(conn, msg, from, body, sender) {
     } catch { return false; }
 }
 
-// ==================== COMMAND HANDLER (RESTORED FROM ORIGINAL) ====================
+// ==================== COMMAND HANDLER ====================
 async function handleCommand(conn, msg, body, from, sender, isOwner, isDeployerUser, isCoOwnerUser) {
     let prefix = globalSettings.prefix;
     if (!body.startsWith(prefix)) return false;
@@ -765,16 +773,20 @@ module.exports = async (conn, m) => {
             }
         }
 
-        // ---- COMMANDS (restored) ----
+        // ---- COMMANDS ----
         if (body && await handleCommand(conn, msg, body, from, sender, isOwner, isDeployerUser, isCoOwnerUser)) return;
 
-        // ---- GROUP SECURITY (non-owners) ----
+        // ---- GROUP SECURITY (non-owners and non-admins) ----
         if (isGroup && !isOwner) {
-            if (await handleAntiLink(conn, msg, body, from, sender)) return;
-            if (await handleAntiScam(conn, msg, body, from, sender)) return;
-            if (await handleAntiPorn(conn, msg, body, from, sender)) return;
-            if (await handleAntiMedia(conn, msg, from, sender)) return;
-            if (await handleAntiTag(conn, msg, from, sender)) return;
+            // Check if sender is a group admin – if yes, skip all anti-features
+            const isGroupAdmin = await isParticipantAdmin(conn, from, sender);
+            if (!isGroupAdmin) {
+                if (await handleAntiLink(conn, msg, body, from, sender)) return;
+                if (await handleAntiScam(conn, msg, body, from, sender)) return;
+                if (await handleAntiPorn(conn, msg, body, from, sender)) return;
+                if (await handleAntiMedia(conn, msg, from, sender)) return;
+                if (await handleAntiTag(conn, msg, from, sender)) return;
+            }
         }
 
         // ---- CHATBOT (private + group mentions) ----
