@@ -54,12 +54,6 @@ mongoose.connect(MONGODB_URI, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ========== CREATE PUBLIC FOLDER IF NOT EXISTS ==========
-const publicDir = path.join(__dirname, 'public');
-if (!fs.existsSync(publicDir)) {
-    fs.mkdirSync(publicDir, { recursive: true });
-}
-
 // ========== LOAD CONFIG ==========
 let config = {};
 try {
@@ -79,7 +73,7 @@ try {
 let globalConn = null;
 let isConnected = false;
 let botStartTime = Date.now();
-let connectionPromise = null; // Kwa ajili ya kusubiri connection
+let reconnectAttempts = 0;
 
 // ========== MAIN BOT FUNCTION ==========
 async function startBot() {
@@ -100,7 +94,9 @@ async function startBot() {
             syncFullHistory: false,
             connectTimeoutMs: 60000,
             keepAliveIntervalMs: 10000,
-            markOnlineOnConnect: true
+            markOnlineOnConnect: true,
+            generateHighQualityLinkPreview: false,
+            shouldIgnoreJid: () => false
         });
 
         globalConn = conn;
@@ -108,14 +104,18 @@ async function startBot() {
 
         // CONNECTION EVENT HANDLER
         conn.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect } = update;
+            const { connection, lastDisconnect, qr } = update;
+            
+            if (qr) {
+                console.log('QR Code received (ignore, using pairing)');
+            }
             
             if (connection === 'open') {
-                console.log(fancy("👹 INSIDIOUS: THE LAST KEY ACTIVATED"));
-                console.log(fancy("✅ Bot is now online"));
+                console.log(fancy("✅ INSIDIOUS IS NOW ONLINE"));
                 isConnected = true;
+                reconnectAttempts = 0;
                 
-                // Tuma welcome message kwa owner
+                // Send welcome to owner
                 setTimeout(async () => {
                     try {
                         if (config.ownerNumber && config.ownerNumber.length > 0) {
@@ -123,7 +123,9 @@ async function startBot() {
                             if (ownerNum.length >= 10) {
                                 const ownerJid = ownerNum + '@s.whatsapp.net';
                                 await conn.sendMessage(ownerJid, { 
-                                    text: "✅ *INSIDIOUS BOT CONNECTED SUCCESSFULLY!*"
+                                    text: "✅ *INSIDIOUS BOT CONNECTED SUCCESSFULLY!*\n\n" +
+                                          "🤖 Status: ONLINE\n" +
+                                          "⚡ Ready to serve!"
                                 });
                             }
                         }
@@ -139,27 +141,33 @@ async function startBot() {
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
                 
                 if (shouldReconnect) {
-                    console.log(fancy("🔄 Restarting bot in 5s..."));
+                    reconnectAttempts++;
+                    const delay = Math.min(5000 * reconnectAttempts, 30000); // Max 30 seconds
+                    console.log(fancy(`🔄 Reconnecting in ${delay/1000}s... (Attempt ${reconnectAttempts})`));
                     setTimeout(() => {
                         if (!isConnected) startBot();
-                    }, 5000);
+                    }, delay);
+                } else {
+                    console.log(fancy("🚫 Logged out. Please delete session folder and restart."));
                 }
             }
         });
 
         conn.ev.on('creds.update', saveCreds);
 
-        // Initialize handler
-        setTimeout(async () => {
+        // Message handler
+        conn.ev.on('messages.upsert', async (m) => {
             try {
                 const handler = require('./handler');
-                if (handler && typeof handler.init === 'function') {
-                    await handler.init(conn);
+                if (handler && typeof handler === 'function') {
+                    await handler(conn, m);
                 }
-            } catch (e) {}
-        }, 2000);
+            } catch (error) {
+                console.error("Message handler error:", error.message);
+            }
+        });
 
-        console.log(fancy("🚀 Bot ready"));
+        console.log(fancy("🚀 Bot initialized"));
         
     } catch (error) {
         console.error("Start error:", error.message);
@@ -182,7 +190,7 @@ async function waitForConnection(timeout = 30000) {
     return globalConn;
 }
 
-// ========== ENDPOINT: /pair – Inangoja connection ==========
+// ========== ENDPOINT: /pair – Hiki ndicho kinachotumika na HTML yako ==========
 app.get('/pair', async (req, res) => {
     try {
         let num = req.query.num;
@@ -203,17 +211,16 @@ app.get('/pair', async (req, res) => {
         
         // Subiri connection iwe tayari
         console.log(fancy(`⏳ Waiting for connection to pair ${cleanNum}...`));
-        const conn = await waitForConnection(30000); // Timeout 30s
+        const conn = await waitForConnection(45000); // Timeout 45 seconds
         
         // Omba pairing code
         console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
         const code = await conn.requestPairingCode(cleanNum);
         
-        // Rudisha code
+        // Rudisha code tu – HTML yako inatarajia hii
         res.json({ 
             success: true, 
-            code: code,
-            message: `Your 8-digit pairing code is: ${code}`
+            code: code
         });
         
     } catch (err) {
@@ -221,13 +228,22 @@ app.get('/pair', async (req, res) => {
         res.status(500).json({ 
             success: false, 
             error: err.message === "Timeout waiting for WhatsApp connection" 
-                ? "Bot is still connecting. Please wait 30 seconds and try again." 
+                ? "Bot is still connecting. Please wait 45 seconds and try again." 
                 : "Failed to generate code: " + err.message
         });
     }
 });
 
-// ========== ENDPOINT: /status – Kuangalia kama bot iko tayari ==========
+// ========== ENDPOINT: /api/stats – HTML yako inaitafuta kwenye window.load ==========
+app.get('/api/stats', (req, res) => {
+    res.json({
+        uptime: Date.now() - botStartTime,
+        connected: isConnected,
+        status: isConnected ? 'online' : 'connecting'
+    });
+});
+
+// ========== ENDPOINT: /status – Kuhifadhi compatibility ==========
 app.get('/status', (req, res) => {
     res.json({
         connected: isConnected,
@@ -244,7 +260,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ========== KEEP ALIVE ==========
+// ========== KEEP ALIVE PING ==========
 setInterval(() => {
     fetch(`http://localhost:${PORT}/health`).catch(() => {});
 }, 5 * 60 * 1000);
@@ -253,6 +269,7 @@ setInterval(() => {
 app.listen(PORT, () => {
     console.log(fancy(`🌐 Web Interface: http://localhost:${PORT}`));
     console.log(fancy(`🔗 Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
+    console.log(fancy(`📊 Status: http://localhost:${PORT}/status`));
     console.log(fancy(`👑 Developer: STANYTZ`));
 });
 
