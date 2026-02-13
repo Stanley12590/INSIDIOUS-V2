@@ -630,6 +630,75 @@ async function handleChatbot(conn, msg, from, body, sender) {
     } catch { return false; }
 }
 
+// ==================== COMMAND HANDLER (RESTORED FROM ORIGINAL) ====================
+async function handleCommand(conn, msg, body, from, sender, isOwner, isDeployerUser, isCoOwnerUser) {
+    let prefix = globalSettings.prefix;
+    if (!body.startsWith(prefix)) return false;
+    const args = body.slice(prefix.length).trim().split(/ +/);
+    const cmd = args.shift().toLowerCase();
+
+    // ---- REQUIRED GROUP CHECK (non-owners) ----
+    if (!isOwner && globalSettings.requiredGroupJid) {
+        const inGroup = await isUserInRequiredGroup(conn, sender);
+        if (!inGroup) {
+            await msg.reply(fancy(`❌ You must join our group to use this bot.\nJoin here: ${globalSettings.requiredGroupInvite}`));
+            return true;
+        }
+    }
+
+    // ---- MODE CHECK ----
+    if (globalSettings.mode === 'self' && !isOwner) {
+        await msg.reply(fancy('❌ Bot is in private mode. Only owner can use commands.'));
+        return true;
+    }
+
+    // ---- COMMAND EXECUTION ----
+    const cmdPath = path.join(__dirname, 'commands');
+    if (await fs.pathExists(cmdPath)) {
+        const categories = await fs.readdir(cmdPath);
+        let found = false;
+        for (const cat of categories) {
+            const catPath = path.join(cmdPath, cat);
+            if (!(await fs.stat(catPath)).isDirectory()) continue;
+            const filePath = path.join(catPath, `${cmd}.js`);
+            if (await fs.pathExists(filePath)) {
+                delete require.cache[require.resolve(filePath)];
+                const command = require(filePath);
+                if (command.ownerOnly && !isOwner) {
+                    await msg.reply(fancy('❌ This command is for owner only!'));
+                    return true;
+                }
+                try {
+                    await command.execute(conn, msg, args, {
+                        from,
+                        sender,
+                        fancy,
+                        config,
+                        isOwner,
+                        isDeployer: isDeployerUser,
+                        isCoOwner: isCoOwnerUser,
+                        reply: msg.reply,
+                        botId: botSecretId,
+                        canPairNumber,
+                        pairNumber,
+                        unpairNumber,
+                        getPairedNumbers: () => Array.from(pairedNumbers)
+                    });
+                } catch (e) {
+                    console.error(`Command error (${cmd}):`, e);
+                    await msg.reply(fancy(`❌ Command error: ${e.message}`));
+                }
+                found = true;
+                break;
+            }
+        }
+        if (!found) await msg.reply(fancy(`❌ Command "${cmd}" not found`));
+    } else {
+        await msg.reply(fancy('❌ Commands folder not found.'));
+    }
+    return true;
+}
+
 // ==================== MAIN HANDLER ====================
 module.exports = async (conn, m) => {
     try {
@@ -637,11 +706,13 @@ module.exports = async (conn, m) => {
         let msg = m.messages[0];
         if (!msg.message) return;
 
+        // Handle status broadcasts
         if (msg.key.remoteJid === 'status@broadcast') {
             await handleAutoStatus(conn, msg);
             return;
         }
 
+        // Load latest settings
         await loadGlobalSettings();
         await loadGroupSettings();
 
@@ -660,12 +731,14 @@ module.exports = async (conn, m) => {
         const isGroup = from.endsWith('@g.us');
         const isChannel = from.endsWith('@newsletter');
 
+        // Store message for anti-delete
         if (body) messageStore.set(msg.key.id, { content: body, sender, timestamp: new Date() });
         if (messageStore.size > 1000) {
             const keys = Array.from(messageStore.keys()).slice(0, 200);
             keys.forEach(k => messageStore.delete(k));
         }
 
+        // Auto presence
         if (globalSettings.autoTyping) await conn.sendPresenceUpdate('composing', from).catch(() => {});
         if (globalSettings.autoRecording && !isGroup) await conn.sendPresenceUpdate('recording', from).catch(() => {});
         if (globalSettings.autoRead) await conn.readMessages([msg.key]).catch(() => {});
@@ -674,12 +747,17 @@ module.exports = async (conn, m) => {
             await conn.sendMessage(from, { react: { text: emoji, key: msg.key } }).catch(() => {});
         }
 
+        // Anti bugs (high priority)
         if (await handleAntiBugs(conn, msg, from, sender)) return;
+
+        // Anti spam
         if (await handleAntiSpam(conn, msg, from, sender)) return;
 
+        // View once & anti delete
         await handleViewOnce(conn, msg);
         await handleAntiDelete(conn, msg);
 
+        // Country block on new participants
         if (msg.message?.protocolMessage?.type === 0 && isGroup) {
             const participants = msg.message.protocolMessage.participantJidList || [];
             for (const p of participants) {
@@ -687,6 +765,10 @@ module.exports = async (conn, m) => {
             }
         }
 
+        // ---- COMMANDS (restored) ----
+        if (body && await handleCommand(conn, msg, body, from, sender, isOwner, isDeployerUser, isCoOwnerUser)) return;
+
+        // ---- GROUP SECURITY (non-owners) ----
         if (isGroup && !isOwner) {
             if (await handleAntiLink(conn, msg, body, from, sender)) return;
             if (await handleAntiScam(conn, msg, body, from, sender)) return;
@@ -695,10 +777,12 @@ module.exports = async (conn, m) => {
             if (await handleAntiTag(conn, msg, from, sender)) return;
         }
 
+        // ---- CHATBOT (private + group mentions) ----
         if (body && !body.startsWith(globalSettings.prefix) && !isOwner) {
             await handleChatbot(conn, msg, from, body, sender);
         }
 
+        // Track activity for inactive removal
         trackActivity(sender);
 
     } catch (err) {
