@@ -24,7 +24,7 @@ module.exports = {
 
                 if (files.length === 0) continue;
 
-                // Create buttons for each command in this category
+                // Create buttons for each command
                 const buttons = files.map(cmd => ({
                     name: "quick_reply",
                     buttonParamsJson: JSON.stringify({
@@ -33,59 +33,51 @@ module.exports = {
                     })
                 }));
 
-                // Prepare the image for the card header
+                // Prepare image media for this card
                 const imageMedia = await prepareWAMessageMedia(
                     { image: { url: config.menuImage } },
                     { upload: conn.waUploadToServer }
                 );
 
-                // Create a card for this category
+                // Build card using Proto objects correctly
                 const card = {
-                    body: proto.Message.InteractiveMessage.Body.create({
-                        text: fancy(`🥀 *${cat.toUpperCase()} CATEGORY*\n\nHello ${pushname},\nSelect a command below.\n\nDev: ${config.developerName}`)
-                    }),
-                    footer: proto.Message.InteractiveMessage.Footer.create({
-                        text: fancy(config.footer)
-                    }),
-                    header: proto.Message.InteractiveMessage.Header.create({
+                    body: { text: fancy(`🥀 *${cat.toUpperCase()} CATEGORY*\n\nHello ${pushname},\nSelect a command below.\n\nDev: ${config.developerName}`) },
+                    footer: { text: fancy(config.footer) },
+                    header: {
                         hasMediaAttachment: true,
-                        ...imageMedia
-                    }),
-                    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                        imageMessage: imageMedia.imageMessage
+                    },
+                    nativeFlowMessage: {
                         buttons: buttons
-                    })
+                    }
                 };
                 cards.push(card);
             }
 
-            // Build the main interactive message with carousel
-            const interactiveMsg = proto.Message.InteractiveMessage.create({
-                body: proto.Message.InteractiveMessage.Body.create({
-                    text: fancy(`👹 INSIDIOUS V2.1.1 DASHBOARD\nUptime: ${runtime(process.uptime())}`)
-                }),
-                footer: proto.Message.InteractiveMessage.Footer.create({
-                    text: fancy("Slide left/right for more categories")
-                }),
-                header: proto.Message.InteractiveMessage.Header.create({
+            // Main interactive message structure
+            const interactiveMessage = {
+                body: { text: fancy(`👹 INSIDIOUS V2.1.1 DASHBOARD\nUptime: ${runtime(process.uptime())}`) },
+                footer: { text: fancy("Slide left/right for more categories") },
+                header: {
                     title: fancy(config.botName),
                     hasMediaAttachment: false
-                }),
-                carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.create({
+                },
+                carouselMessage: {
                     cards: cards
-                })
-            });
+                }
+            };
 
-            // Wrap in viewOnceMessage (optional, message disappears after viewing once)
-            const viewOnceMsg = {
+            // Wrap in viewOnceMessage (makes it disappear after viewing)
+            const viewOnceMessage = {
                 viewOnceMessage: {
                     message: {
-                        interactiveMessage: interactiveMsg
+                        interactiveMessage: interactiveMessage
                     }
                 }
             };
 
-            // Generate the full message and relay it
-            const waMessage = generateWAMessageFromContent(from, viewOnceMsg, {
+            // Generate and send the message
+            const waMessage = generateWAMessageFromContent(from, viewOnceMessage, {
                 userJid: conn.user.id,
                 upload: conn.waUploadToServer
             });
@@ -93,11 +85,11 @@ module.exports = {
 
         } catch (e) {
             console.error("Menu error:", e);
-            // Fallback to simple text menu if interactive fails
-            let helpText = `╭─── • 🥀 • ───╮\n`;
-            helpText += `   *INSIDIOUS MENU*  \n`;
-            helpText += `╰─── • 🥀 • ───╯\n\n`;
-            helpText += `Hello ${pushname},\n\n`;
+            // Fallback plain text menu if interactive fails
+            let text = `╭─── • 🥀 • ───╮\n`;
+            text += `   *INSIDIOUS MENU*  \n`;
+            text += `╰─── • 🥀 • ───╯\n\n`;
+            text += `Hello ${pushname},\n\n`;
             
             const cmdPath = path.join(__dirname, '../../commands');
             const categories = fs.readdirSync(cmdPath);
@@ -106,12 +98,12 @@ module.exports = {
                 if (!fs.statSync(catPath).isDirectory()) continue;
                 const files = fs.readdirSync(catPath).filter(f => f.endsWith('.js')).map(f => f.replace('.js', ''));
                 if (files.length) {
-                    helpText += `*${cat.toUpperCase()}*\n`;
-                    helpText += files.map(cmd => `${config.prefix}${cmd}`).join(', ') + '\n\n';
+                    text += `*${cat.toUpperCase()}*\n`;
+                    text += files.map(cmd => `${config.prefix}${cmd}`).join(', ') + '\n\n';
                 }
             }
-            helpText += `\n_Uptime: ${runtime(process.uptime())}_`;
-            await conn.sendMessage(from, { text: fancy(helpText) }, { quoted: msg });
+            text += `\n_Uptime: ${runtime(process.uptime())}_`;
+            await conn.sendMessage(from, { text: fancy(text) }, { quoted: msg });
         }
     }
 };
