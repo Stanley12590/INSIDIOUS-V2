@@ -24,7 +24,7 @@ module.exports = {
             
             const cards = [];
 
-            // Maximum buttons per card (to avoid cramming)
+            // Maximum buttons per card
             const BUTTONS_PER_PAGE = 6;
 
             for (const cat of categories) {
@@ -38,13 +38,13 @@ module.exports = {
 
                 if (files.length === 0) continue;
 
-                // Prepare image media once per category (same image for all cards in this category)
+                // Prepare image media once per category
                 const imageMedia = await prepareWAMessageMedia(
                     { image: { url: config.menuImage } },
                     { upload: conn.waUploadToServer }
                 );
 
-                // Split files into chunks (pages)
+                // Split files into pages
                 const pages = [];
                 for (let i = 0; i < files.length; i += BUTTONS_PER_PAGE) {
                     pages.push(files.slice(i, i + BUTTONS_PER_PAGE));
@@ -56,29 +56,27 @@ module.exports = {
                         name: "quick_reply",
                         buttonParamsJson: JSON.stringify({
                             display_text: `${config.prefix}${cmd}`,
-                            id: `${config.prefix}${cmd}`
+                            id: `${config.prefix}${cmd}`  // ID includes prefix so handler can process
                         })
                     }));
 
                     // Add navigation buttons if multiple pages
                     if (pages.length > 1) {
-                        // Previous button (except on first page)
                         if (pageIndex > 0) {
                             buttons.push({
                                 name: "quick_reply",
                                 buttonParamsJson: JSON.stringify({
                                     display_text: "◀️ Prev",
-                                    id: `${config.prefix}menu_${cat}_${pageIndex - 1}`
+                                    id: `${config.prefix}menu ${cat} ${pageIndex - 1}`  // custom ID for navigation
                                 })
                             });
                         }
-                        // Next button (except on last page)
                         if (pageIndex < pages.length - 1) {
                             buttons.push({
                                 name: "quick_reply",
                                 buttonParamsJson: JSON.stringify({
                                     display_text: "Next ▶️",
-                                    id: `${config.prefix}menu_${cat}_${pageIndex + 1}`
+                                    id: `${config.prefix}menu ${cat} ${pageIndex + 1}`
                                 })
                             });
                         }
@@ -128,7 +126,7 @@ module.exports = {
                 }
             };
 
-            // Send as regular interactive message
+            // Send as regular interactive message (not view once)
             const waMessage = generateWAMessageFromContent(from, { interactiveMessage }, {
                 userJid: conn.user.id,
                 upload: conn.waUploadToServer
