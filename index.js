@@ -222,7 +222,7 @@ async function startBot() {
                     console.log(fancy("🔄 Restarting bot..."));
                     setTimeout(() => {
                         startBot();
-                    }, 50000000000);
+                    }, 5000);
                 }
             }
         });
