@@ -1,14 +1,25 @@
 const axios = require('axios');
+
 module.exports = {
     name: "tiktok",
-    execute: async (conn, msg, args, { from, fancy }) => {
-        if (!args[0]) return msg.reply(fancy("ᴘᴀꜱᴛᴇ ᴛɪᴋᴛᴏᴋ ʟɪɴᴋ!"));
+    description: "Download TikTok video (no watermark)",
+    usage: "[URL]",
+    execute: async (conn, msg, args, { reply, fancy }) => {
+        const url = args[0];
+        if (!url) return reply("❌ Please provide a TikTok URL.");
+
         try {
-            const res = await axios.get(`https://ef-prime-md-ultra-apis.vercel.app/downloader/tkdl?=${args[0]}`);
-            await conn.sendMessage(from, { 
-                video: { url: res.data.result.video }, 
-                caption: fancy("ᴅᴏᴡɴʟᴏᴀᴅᴇᴅ ʙʏ ɪɴꜱɪᴅɪᴏᴜꜱ") 
+            const api = `https://api.tikmate.cc/?url=${encodeURIComponent(url)}`;
+            const res = await axios.get(api);
+            const videoUrl = `https://tikmate.cc/download/${res.data.token}/${res.data.id}.mp4`;
+            const videoBuffer = await axios.get(videoUrl, { responseType: 'arraybuffer' });
+
+            await conn.sendMessage(msg.key.remoteJid, {
+                video: Buffer.from(videoBuffer.data),
+                caption: fancy("✅ TikTok video downloaded")
             }, { quoted: msg });
-        } catch (e) { msg.reply("ᴇʀʀᴏʀ ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ ᴠɪᴅᴇᴏ."); }
+        } catch {
+            reply("❌ Download failed.");
+        }
     }
 };
