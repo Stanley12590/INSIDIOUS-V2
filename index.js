@@ -125,7 +125,8 @@ async function startBot() {
                                 await conn.sendMessage(ownerJid, { 
                                     text: "✅ *INSIDIOUS BOT CONNECTED SUCCESSFULLY!*\n\n" +
                                           "🤖 Status: ONLINE\n" +
-                                          "⚡ Ready to serve!"
+                                          "⚡ Ready to serve!\n" +
+                                          "📅 " + new Date().toLocaleString()
                                 });
                             }
                         }
@@ -142,7 +143,7 @@ async function startBot() {
                 
                 if (shouldReconnect) {
                     reconnectAttempts++;
-                    const delay = Math.min(5000 * reconnectAttempts, 30000); // Max 30 seconds
+                    const delay = Math.min(5000 * reconnectAttempts, 30000);
                     console.log(fancy(`🔄 Reconnecting in ${delay/1000}s... (Attempt ${reconnectAttempts})`));
                     setTimeout(() => {
                         if (!isConnected) startBot();
@@ -190,51 +191,48 @@ async function waitForConnection(timeout = 30000) {
     return globalConn;
 }
 
-// ========== ENDPOINT: /pair – Hiki ndicho kinachotumika na HTML yako ==========
+// ========== ENDPOINT: /pair – Inatumika na HTML yako ==========
 app.get('/pair', async (req, res) => {
     try {
         let num = req.query.num;
         if (!num) {
-            return res.status(400).json({ 
-                success: false, 
-                error: "Provide number! Example: /pair?num=255123456789" 
-            });
+            return res.json({ error: "Provide number! Example: /pair?num=255123456789" });
         }
         
         const cleanNum = num.replace(/[^0-9]/g, '');
         if (cleanNum.length < 10) {
-            return res.status(400).json({ 
-                success: false, 
-                error: "Invalid number. Use country code + number (e.g., 255618558502)" 
-            });
+            return res.json({ error: "Invalid number. Use country code + number" });
         }
         
-        // Subiri connection iwe tayari
         console.log(fancy(`⏳ Waiting for connection to pair ${cleanNum}...`));
-        const conn = await waitForConnection(45000); // Timeout 45 seconds
+        
+        // Subiri connection iwe tayari (max 45 seconds)
+        let waited = 0;
+        while (!isConnected && waited < 45) {
+            await new Promise(r => setTimeout(r, 1000));
+            waited++;
+        }
+        
+        if (!isConnected) {
+            return res.json({ error: "Bot is still connecting. Please wait 45 seconds and try again." });
+        }
         
         // Omba pairing code
         console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
-        const code = await conn.requestPairingCode(cleanNum);
+        const code = await globalConn.requestPairingCode(cleanNum);
         
-        // Rudisha code tu – HTML yako inatarajia hii
+        // Rudisha code – HTML yako inatarajia hii
         res.json({ 
-            success: true, 
             code: code
         });
         
     } catch (err) {
         console.error("Pairing error:", err.message);
-        res.status(500).json({ 
-            success: false, 
-            error: err.message === "Timeout waiting for WhatsApp connection" 
-                ? "Bot is still connecting. Please wait 45 seconds and try again." 
-                : "Failed to generate code: " + err.message
-        });
+        res.json({ error: "Failed to generate code: " + err.message });
     }
 });
 
-// ========== ENDPOINT: /api/stats – HTML yako inaitafuta kwenye window.load ==========
+// ========== ENDPOINT: /api/stats – HTML yako inaitafuta ==========
 app.get('/api/stats', (req, res) => {
     res.json({
         uptime: Date.now() - botStartTime,
@@ -243,7 +241,7 @@ app.get('/api/stats', (req, res) => {
     });
 });
 
-// ========== ENDPOINT: /status – Kuhifadhi compatibility ==========
+// ========== ENDPOINT: /status – Kwa ajili ya kuangalia ==========
 app.get('/status', (req, res) => {
     res.json({
         connected: isConnected,
@@ -271,6 +269,7 @@ app.listen(PORT, () => {
     console.log(fancy(`🔗 Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
     console.log(fancy(`📊 Status: http://localhost:${PORT}/status`));
     console.log(fancy(`👑 Developer: STANYTZ`));
+    console.log(fancy(`✅ Bot is starting... Please wait 30-60 seconds for connection`));
 });
 
 module.exports = app;
