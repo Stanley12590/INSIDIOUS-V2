@@ -8,7 +8,7 @@ module.exports = {
     name: "menu",
     execute: async (conn, msg, args, { from, sender, pushname }) => {
         try {
-            // Get user's display name (fix undefined pushname)
+            // Get user's display name
             let userName = pushname;
             if (!userName) {
                 try {
@@ -24,52 +24,89 @@ module.exports = {
             
             const cards = [];
 
+            // Maximum buttons per card (to avoid cramming)
+            const BUTTONS_PER_PAGE = 6;
+
             for (const cat of categories) {
                 const catPath = path.join(cmdPath, cat);
                 const stat = fs.statSync(catPath);
                 if (!stat.isDirectory()) continue;
                 
-                const files = fs.readdirSync(catPath)
+                let files = fs.readdirSync(catPath)
                     .filter(f => f.endsWith('.js'))
                     .map(f => f.replace('.js', ''));
 
                 if (files.length === 0) continue;
 
-                // Create buttons for each command
-                const buttons = files.map(cmd => ({
-                    name: "quick_reply",
-                    buttonParamsJson: JSON.stringify({
-                        display_text: `${config.prefix}${cmd}`,
-                        id: `${config.prefix}${cmd}`
-                    })
-                }));
-
-                // Prepare image media for this card
+                // Prepare image media once per category (same image for all cards in this category)
                 const imageMedia = await prepareWAMessageMedia(
                     { image: { url: config.menuImage } },
                     { upload: conn.waUploadToServer }
                 );
 
-                // Build card
-                const card = {
-                    body: { text: fancy(
-                        `━━━━━━━━━━━━━━━━━━\n` +
-                        `   🥀 *${cat.toUpperCase()} CATEGORY*\n` +
-                        `━━━━━━━━━━━━━━━━━━\n\n` +
-                        `👋 Hello, *${userName}*!\n` +
-                        `Select a command below.\n\n` +
-                        `👑 Developer: ${config.developerName}`
-                    ) },
-                    footer: { text: fancy(config.footer) },
-                    header: {
-                        hasMediaAttachment: true,
-                        imageMessage: imageMedia.imageMessage
-                    },
-                    nativeFlowMessage: {
-                        buttons: buttons
+                // Split files into chunks (pages)
+                const pages = [];
+                for (let i = 0; i < files.length; i += BUTTONS_PER_PAGE) {
+                    pages.push(files.slice(i, i + BUTTONS_PER_PAGE));
+                }
+
+                // Create one card per page
+                pages.forEach((pageFiles, pageIndex) => {
+                    const buttons = pageFiles.map(cmd => ({
+                        name: "quick_reply",
+                        buttonParamsJson: JSON.stringify({
+                            display_text: `${config.prefix}${cmd}`,
+                            id: `${config.prefix}${cmd}`
+                        })
+                    }));
+
+                    // Add navigation buttons if multiple pages
+                    if (pages.length > 1) {
+                        // Previous button (except on first page)
+                        if (pageIndex > 0) {
+                            buttons.push({
+                                name: "quick_reply",
+                                buttonParamsJson: JSON.stringify({
+                                    display_text: "◀️ Prev",
+                                    id: `${config.prefix}menu_${cat}_${pageIndex - 1}`
+                                })
+                            });
+                        }
+                        // Next button (except on last page)
+                        if (pageIndex < pages.length - 1) {
+                            buttons.push({
+                                name: "quick_reply",
+                                buttonParamsJson: JSON.stringify({
+                                    display_text: "Next ▶️",
+                                    id: `${config.prefix}menu_${cat}_${pageIndex + 1}`
+                                })
+                            });
+                        }
                     }
-                };
-                cards.push(card);
+
+                    // Build card with page indicator
+                    let pageInfo = pages.length > 1 ? ` (Page ${pageIndex + 1}/${pages.length})` : '';
+                    
+                    const card = {
+                        body: { text: fancy(
+                            `━━━━━━━━━━━━━━━━━━\n` +
+                            `   🥀 *${cat.toUpperCase()} CATEGORY*${pageInfo}\n` +
+                            `━━━━━━━━━━━━━━━━━━\n\n` +
+                            `👋 Hello, *${userName}*!\n` +
+                            `Select a command below.\n\n` +
+                            `👑 Developer: ${config.developerName}`
+                        ) },
+                        footer: { text: fancy(config.footer) },
+                        header: {
+                            hasMediaAttachment: true,
+                            imageMessage: imageMedia.imageMessage
+                        },
+                        nativeFlowMessage: {
+                            buttons: buttons
+                        }
+                    };
+                    cards.push(card);
+                });
             }
 
             // Main interactive message
@@ -81,7 +118,7 @@ module.exports = {
                     `⏱️ Uptime: ${runtime(process.uptime())}\n\n` +
                     `👤 User: ${userName}`
                 ) },
-                footer: { text: fancy("◀️ Slide left/right for more categories ▶️") },
+                footer: { text: fancy("◀️ Slide left/right for categories & pages ▶️") },
                 header: {
                     title: fancy(config.botName),
                     hasMediaAttachment: false
@@ -91,7 +128,7 @@ module.exports = {
                 }
             };
 
-            // Send as regular interactive message (not view once)
+            // Send as regular interactive message
             const waMessage = generateWAMessageFromContent(from, { interactiveMessage }, {
                 userJid: conn.user.id,
                 upload: conn.waUploadToServer
