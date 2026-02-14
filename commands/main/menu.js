@@ -39,7 +39,7 @@ module.exports = {
                     { upload: conn.waUploadToServer }
                 );
 
-                // Build card using Proto objects correctly
+                // Build card
                 const card = {
                     body: { text: fancy(`🥀 *${cat.toUpperCase()} CATEGORY*\n\nHello ${pushname},\nSelect a command below.\n\nDev: ${config.developerName}`) },
                     footer: { text: fancy(config.footer) },
@@ -54,7 +54,7 @@ module.exports = {
                 cards.push(card);
             }
 
-            // Main interactive message structure
+            // Main interactive message
             const interactiveMessage = {
                 body: { text: fancy(`👹 INSIDIOUS V2.1.1 DASHBOARD\nUptime: ${runtime(process.uptime())}`) },
                 footer: { text: fancy("Slide left/right for more categories") },
@@ -67,7 +67,7 @@ module.exports = {
                 }
             };
 
-            // Wrap in viewOnceMessage (makes it disappear after viewing)
+            // Wrap in viewOnceMessage
             const viewOnceMessage = {
                 viewOnceMessage: {
                     message: {
@@ -76,7 +76,7 @@ module.exports = {
                 }
             };
 
-            // Generate and send the message
+            // Generate and send
             const waMessage = generateWAMessageFromContent(from, viewOnceMessage, {
                 userJid: conn.user.id,
                 upload: conn.waUploadToServer
@@ -85,7 +85,7 @@ module.exports = {
 
         } catch (e) {
             console.error("Menu error:", e);
-            // Fallback plain text menu if interactive fails
+            // Fallback plain text menu
             let text = `╭─── • 🥀 • ───╮\n`;
             text += `   *INSIDIOUS MENU*  \n`;
             text += `╰─── • 🥀 • ───╯\n\n`;
