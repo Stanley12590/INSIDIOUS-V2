@@ -34,7 +34,8 @@ function parseArray(value, defaultValue = []) {
 module.exports = {
     // ==================== BOT METADATA ====================
     botName: getConfig('BOT_NAME', "INSIDIOUS: THE LAST KEY"),
-    developer: getConfig('DEVELOPER_NAME', "STANYTZ"),          // matches handler.js
+    developer: getConfig('DEVELOPER_NAME', "STANYTZ"),          // used in some places
+    developerName: getConfig('DEVELOPER_NAME', "STANYTZ"),      // alias for commands
     ownerName: getConfig('BOT_OWNER', "STANY"),
     ownerNumber: parseArray(getConfig('OWNER_NUMBER', "255000000000")),
     version: getConfig('VERSION', "2.1.1"),
@@ -44,12 +45,12 @@ module.exports = {
 
     // ==================== COMMANDS ====================
     prefix: getConfig('BOT_PREFIX', "."),
-    mode: getConfig('BOT_MODE', "public"),                    // 'public' or 'self' – matches handler.js
+    mode: getConfig('BOT_MODE', "public"),                    // 'public' or 'self'
     commandWithoutPrefix: getConfig('COMMAND_WITHOUT_PREFIX', "true") === "true",
 
     // ==================== CHANNEL / GROUP ====================
     newsletterJid: getConfig('NEWSLETTER_JID', "120363404317544295@newsletter"),
-    requiredGroupJid: getConfig('GROUP_JID', "120363406549688641@g.us"),   // matches handler.js
+    requiredGroupJid: getConfig('GROUP_JID', "120363406549688641@g.us"),
     requiredGroupInvite: getConfig('GROUP_INVITE', "https://chat.whatsapp.com/J19JASXoaK0GVSoRvShr4Y"),
     autoFollowChannels: parseArray(getConfig('AUTO_FOLLOW_CHANNELS', "120363404317544295@newsletter")),
 
@@ -108,9 +109,9 @@ module.exports = {
         )
     ),
     blockedMediaTypes: parseArray(
-        getConfig('BLOCKED_MEDIA_TYPES', 'photo,video,sticker') // default blocked in antimedia
+        getConfig('BLOCKED_MEDIA_TYPES', 'photo,video,sticker')
     ),
-    blockedCountries: parseArray(getConfig('BLOCKED_COUNTRIES', '')), // e.g., '1,234,91'
+    blockedCountries: parseArray(getConfig('BLOCKED_COUNTRIES', '')),
 
     // ==================== AUTO REACT / STATUS ====================
     autoReactEmojis: parseArray(
