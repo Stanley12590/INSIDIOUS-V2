@@ -4,7 +4,7 @@ module.exports = {
     description: "Generate 8-digit pairing code for a WhatsApp number",
     usage: "[phone number]",
     
-    execute: async (conn, msg, args, { from, isOwner, reply, config, canPairNumber, pairNumber, getPairedNumbers }) => {
+    execute: async (conn, msg, args, { from, isOwner, reply, config, fancy, canPairNumber, pairNumber, getPairedNumbers }) => {
         if (!isOwner) return reply("❌ This command is for owner only!");
         if (!args[0]) return reply(`🔐 Usage: ${config.prefix}pair <number>\nExample: ${config.prefix}pair 255712345678`);
 
@@ -20,7 +20,7 @@ module.exports = {
             const code = await conn.requestPairingCode(number);
             await pairNumber(number);
             const co = getPairedNumbers().filter(n => !config.ownerNumber.includes(n)).length;
-            await reply(`✅ *PAIRING CODE GENERATED*\n\n📱 Number: ${number}\n🔐 Code: ${code}\n👥 Co‑owners: ${co}/${config.maxCoOwners}`);
+            await reply(fancy(`✅ *PAIRING CODE GENERATED*\n\n📱 Number: ${number}\n🔐 Code: ${code}\n👥 Co‑owners: ${co}/${config.maxCoOwners}`));
         } catch (e) {
             reply(`❌ Pairing failed: ${e.message}`);
         }
