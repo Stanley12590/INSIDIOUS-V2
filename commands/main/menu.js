@@ -8,11 +8,15 @@ module.exports = {
     name: "menu",
     execute: async (conn, msg, args, { from, sender, pushname }) => {
         try {
-            // Get user's display name (fallback if pushname is undefined)
+            // Get user's display name (fix undefined pushname)
             let userName = pushname;
             if (!userName) {
-                const contact = await conn.getContact(sender);
-                userName = contact?.name || contact?.pushname || sender.split('@')[0];
+                try {
+                    const contact = await conn.getContact(sender);
+                    userName = contact?.name || contact?.pushname || sender.split('@')[0];
+                } catch {
+                    userName = sender.split('@')[0];
+                }
             }
 
             const cmdPath = path.join(__dirname, '../../commands');
@@ -31,11 +35,11 @@ module.exports = {
 
                 if (files.length === 0) continue;
 
-                // Create buttons for each command (premium design with emojis)
+                // Create buttons for each command
                 const buttons = files.map(cmd => ({
                     name: "quick_reply",
                     buttonParamsJson: JSON.stringify({
-                        display_text: `✨ ${config.prefix}${cmd}`,
+                        display_text: `${config.prefix}${cmd}`,
                         id: `${config.prefix}${cmd}`
                     })
                 }));
@@ -46,14 +50,14 @@ module.exports = {
                     { upload: conn.waUploadToServer }
                 );
 
-                // Build card with premium styling
+                // Build card
                 const card = {
                     body: { text: fancy(
                         `━━━━━━━━━━━━━━━━━━\n` +
                         `   🥀 *${cat.toUpperCase()} CATEGORY*\n` +
                         `━━━━━━━━━━━━━━━━━━\n\n` +
                         `👋 Hello, *${userName}*!\n` +
-                        `Select a command below to execute.\n\n` +
+                        `Select a command below.\n\n` +
                         `👑 Developer: ${config.developerName}`
                     ) },
                     footer: { text: fancy(config.footer) },
@@ -68,7 +72,7 @@ module.exports = {
                 cards.push(card);
             }
 
-            // Main interactive message (premium dashboard)
+            // Main interactive message
             const interactiveMessage = {
                 body: { text: fancy(
                     `━━━━━━━━━━━━━━━━━━\n` +
@@ -87,7 +91,7 @@ module.exports = {
                 }
             };
 
-            // Generate and send the message (NOT view once, so it stays visible)
+            // Send as regular interactive message (not view once)
             const waMessage = generateWAMessageFromContent(from, { interactiveMessage }, {
                 userJid: conn.user.id,
                 upload: conn.waUploadToServer
@@ -96,11 +100,11 @@ module.exports = {
 
         } catch (e) {
             console.error("Menu error:", e);
-            // Fallback plain text menu for unsupported devices
+            // Fallback plain text menu
             let text = `╭─── • 🥀 • ───╮\n`;
             text += `   *INSIDIOUS MENU*  \n`;
             text += `╰─── • 🥀 • ───╯\n\n`;
-            text += `Hello ${userName || 'User'},\n\n`;
+            text += `Hello ${pushname || sender.split('@')[0]},\n\n`;
             
             const cmdPath = path.join(__dirname, '../../commands');
             const categories = fs.readdirSync(cmdPath);
