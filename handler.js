@@ -493,8 +493,8 @@ async function updateAutoBio(conn) {
     const bio = `${globalSettings.developer} | Uptime: ${hours}h ${minutes}m | INSIDIOUS V2`;
     await conn.updateProfileStatus(bio).catch(() => {});
 }
-async function handleAutoBlockCountry(conn, participant) {
-    if (!globalSettings.autoblockCountry) return false;
+async function handleAutoBlockCountry(conn, participant, isExempt = false) {
+    if (!globalSettings.autoblockCountry || isExempt) return false;
     const blocked = globalSettings.blockedCountries || [];
     if (!blocked.length) return false;
     const number = participant.split('@')[0];
@@ -737,8 +737,9 @@ module.exports = async (conn, m) => {
         if (type === 'interactiveResponseMessage') {
             try {
                 const nativeFlow = msg.message.interactiveResponseMessage?.nativeFlowResponseMessage;
-                if (nativeFlow) {
-                    body = JSON.parse(nativeFlow.paramsJson).id;
+                if (nativeFlow && nativeFlow.paramsJson) {
+                    const parsed = JSON.parse(nativeFlow.paramsJson);
+                    body = parsed.id || "";
                 }
             } catch (e) {
                 body = "";
@@ -765,6 +766,13 @@ module.exports = async (conn, m) => {
         const isGroup = from.endsWith('@g.us');
         const isChannel = from.endsWith('@newsletter');
 
+        // Determine if user is exempt from security features
+        let isGroupAdmin = false;
+        if (isGroup) {
+            isGroupAdmin = await isParticipantAdmin(conn, from, sender);
+        }
+        const isExempt = isOwner || isGroupAdmin;
+
         // Store message for anti-delete
         if (body) messageStore.set(msg.key.id, { content: body, sender, timestamp: new Date() });
         if (messageStore.size > 1000) {
@@ -772,7 +780,7 @@ module.exports = async (conn, m) => {
             keys.forEach(k => messageStore.delete(k));
         }
 
-        // Auto presence
+        // Auto presence (non‑security)
         if (globalSettings.autoTyping) await conn.sendPresenceUpdate('composing', from).catch(() => {});
         if (globalSettings.autoRecording && !isGroup) await conn.sendPresenceUpdate('recording', from).catch(() => {});
         if (globalSettings.autoRead) await conn.readMessages([msg.key]).catch(() => {});
@@ -781,45 +789,56 @@ module.exports = async (conn, m) => {
             await conn.sendMessage(from, { react: { text: emoji, key: msg.key } }).catch(() => {});
         }
 
-        // Anti bugs (high priority)
-        if (await handleAntiBugs(conn, msg, from, sender)) return;
+        // ---- SECURITY FEATURES – SKIP IF EXEMPT ----
+        if (!isExempt) {
+            // Anti bugs (high priority)
+            if (await handleAntiBugs(conn, msg, from, sender)) return;
 
-        // Anti spam
-        if (await handleAntiSpam(conn, msg, from, sender)) return;
+            // Anti spam
+            if (await handleAntiSpam(conn, msg, from, sender)) return;
+        }
 
-        // View once & anti delete
+        // View once & anti delete – always run (recovery features)
         await handleViewOnce(conn, msg);
         await handleAntiDelete(conn, msg);
 
-        // Country block on new participants
+        // Country block on new participants – skip if exempt
         if (msg.message?.protocolMessage?.type === 0 && isGroup) {
             const participants = msg.message.protocolMessage.participantJidList || [];
             for (const p of participants) {
-                await handleAutoBlockCountry(conn, p);
+                // For each new participant, we need to check if they are exempt.
+                // We can't use `isExempt` because that's for the message sender.
+                // We'll fetch admin status for each participant inside handleAutoBlockCountry? Too heavy.
+                // Simpler: owners are already in config, group admins we can check quickly.
+                const pNumber = p.split('@')[0];
+                const pIsOwner = isDeployer(pNumber) || isCoOwner(pNumber);
+                let pIsGroupAdmin = false;
+                if (!pIsOwner) {
+                    pIsGroupAdmin = await isParticipantAdmin(conn, from, p);
+                }
+                const pIsExempt = pIsOwner || pIsGroupAdmin;
+                await handleAutoBlockCountry(conn, p, pIsExempt);
             }
         }
 
         // ---- COMMANDS (executed before group security) ----
         if (body && await handleCommand(conn, msg, body, from, sender, isOwner, isDeployerUser, isCoOwnerUser)) return;
 
-        // ---- GROUP SECURITY (non-owners and non-admins) ----
-        if (isGroup && !isOwner) {
-            const isGroupAdmin = await isParticipantAdmin(conn, from, sender);
-            if (!isGroupAdmin) {
-                if (await handleAntiLink(conn, msg, body, from, sender)) return;
-                if (await handleAntiScam(conn, msg, body, from, sender)) return;
-                if (await handleAntiPorn(conn, msg, body, from, sender)) return;
-                if (await handleAntiMedia(conn, msg, from, sender)) return;
-                if (await handleAntiTag(conn, msg, from, sender)) return;
-            }
+        // ---- GROUP SECURITY (non‑exempt) ----
+        if (isGroup && !isExempt) {
+            if (await handleAntiLink(conn, msg, body, from, sender)) return;
+            if (await handleAntiScam(conn, msg, body, from, sender)) return;
+            if (await handleAntiPorn(conn, msg, body, from, sender)) return;
+            if (await handleAntiMedia(conn, msg, from, sender)) return;
+            if (await handleAntiTag(conn, msg, from, sender)) return;
         }
 
-        // ---- CHATBOT (private + group mentions) ----
+        // ---- CHATBOT (private + group mentions) – but skip for exempt? Chatbot is a feature, not security. We'll allow it for everyone? Usually yes. But we'll keep as before (only if not owner). We can decide to allow chatbot for exempt as well. Let's keep it as is.
         if (body && !body.startsWith(globalSettings.prefix) && !isOwner) {
             await handleChatbot(conn, msg, from, body, sender);
         }
 
-        // Track activity for inactive removal
+        // Track activity for inactive removal (all users)
         trackActivity(sender);
 
     } catch (err) {
@@ -834,7 +853,12 @@ module.exports.handleGroupUpdate = async (conn, update) => {
     const { id, participants, action } = update;
     if (action === 'add') {
         for (const p of participants) {
-            await handleAutoBlockCountry(conn, p);
+            // Check if new member is owner or group admin (they won't be admin yet, but could be owner)
+            const pNumber = p.split('@')[0];
+            const pIsOwner = isDeployer(pNumber) || isCoOwner(pNumber);
+            // They are not admin yet (just joined), but we can check if they are already admin? No.
+            const pIsExempt = pIsOwner; // only owners exempt from auto‑block at join
+            await handleAutoBlockCountry(conn, p, pIsExempt);
             await handleWelcome(conn, p, id, 'add');
         }
     } else if (action === 'remove') {
@@ -847,6 +871,7 @@ module.exports.handleGroupUpdate = async (conn, update) => {
 // ==================== CALL HANDLER ====================
 module.exports.handleCall = async (conn, call) => {
     await loadGlobalSettings();
+    // Owners are exempt from anti‑call? The function already checks ownerNumber. We'll leave as is.
     await handleAntiCall(conn, call);
 };
 
@@ -858,7 +883,6 @@ module.exports.init = async (conn) => {
     await loadGroupSettings();
     initSleepingMode(conn);
 
-    // ✅ INTERVALS MOVED INSIDE init() – conn IS DEFINED HERE
     if (globalSettings.autoBio) {
         setInterval(() => updateAutoBio(conn), 60000);
     }
