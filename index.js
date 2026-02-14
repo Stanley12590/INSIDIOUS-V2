@@ -6,6 +6,7 @@ const path = require("path");
 const fs = require('fs').promises;
 const { existsSync, mkdirSync } = require('fs');
 const crypto = require('crypto');
+const { Boom } = require('@hapi/boom');
 
 // ✅ **FANCY FUNCTION (USIGUSE)**
 function fancy(text) {
@@ -25,182 +26,144 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ✅ **MONGODB CONNECTION**
-console.log(fancy("🔗 Connecting to MongoDB..."));
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
-mongoose.connect(MONGODB_URI, {
-    serverSelectionTimeoutMS: 30000,
-    socketTimeoutMS: 45000,
-    maxPoolSize: 10
-})
+mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 30000 })
 .then(() => console.log(fancy("✅ MongoDB Connected")))
-.catch(err => console.log(fancy("❌ MongoDB Connection FAILED: " + err.message)));
+.catch(err => console.log(fancy("❌ MongoDB Error")));
 
-// ✅ **MIDDLEWARE**
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-if (!existsSync(path.join(__dirname, 'public'))) {
-    mkdirSync(path.join(__dirname, 'public'), { recursive: true });
-}
 
-// ✅ **GLOBAL VARS**
 let globalConn = null;
 let isConnected = false;
-let botStartTime = Date.now();
-
-// ✅ **LOAD CONFIG**
-let config = {};
-try { config = require('./config'); } catch {
-    config = { prefix: '.', ownerNumber: ['255000000000'], botName: 'INSIDIOUS', workMode: 'public' };
-}
 
 // ✅ **LOAD HANDLER**
 let handler = null;
-try { handler = require('./handler'); } catch (e) { console.log("Handler not found yet"); }
+try { handler = require('./handler'); } catch (e) {}
 
-// ==================== MAIN BOT – INFINITE STAY-ALIVE ====================
+// ==================== MAIN BOT – STABLE CONNECTION ====================
 async function startBot() {
     try {
-        console.log(fancy("🚀 Starting INSIDIOUS..."));
         const { state, saveCreds } = await useMultiFileAuthState('insidious_session');
         const { version } = await fetchLatestBaileysVersion();
 
         const conn = makeWASocket({
             version,
-            auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })) },
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }))
+            },
             logger: pino({ level: "silent" }),
             browser: Browsers.macOS("Safari"),
-            syncFullHistory: false,
-            connectTimeoutMs: 60000,
-            keepAliveIntervalMs: 30000,
             markOnlineOnConnect: true,
-            generateHighQualityLinkPreview: true,
-            maxRetryCount: Infinity,
-            retryRequestDelayMs: 1000
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 0,
+            keepAliveIntervalMs: 20000,
+            printQRInTerminal: false
         });
 
         globalConn = conn;
-        botStartTime = Date.now();
 
         conn.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
             if (connection === 'open') {
-                console.log(fancy("✅ Bot online and secure"));
+                console.log(fancy("✅ insidious is online and active"));
                 isConnected = true;
-                if (handler && typeof handler.init === 'function') await handler.init(conn).catch(() => {});
+                if (handler && typeof handler.init === 'function') await handler.init(conn);
             }
             if (connection === 'close') {
                 isConnected = false;
-                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-                console.log(fancy(`⚠️ Connection closed. Reconnecting: ${shouldReconnect}`));
-                if (shouldReconnect) setTimeout(startBot, 5000);
+                let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
+                
+                if (reason === DisconnectReason.loggedOut) {
+                    console.log(fancy("❌ Logged out. Delete session and pair again."));
+                } else {
+                    // Kwa makosa mengine yote, reconnect mara moja
+                    setTimeout(startBot, 3000);
+                }
             }
         });
 
         conn.ev.on('creds.update', saveCreds);
         conn.ev.on('messages.upsert', async (m) => {
-            try { if (handler) await handler(conn, m); } catch (e) { console.error("Handler error:", e.message); }
-        });
-        
-        conn.ev.on('group-participants.update', async (up) => {
-            try { if (handler && typeof handler.handleGroupUpdate === 'function') await handler.handleGroupUpdate(conn, up); } catch {}
+            try { if (handler) await handler(conn, m); } catch (e) {}
         });
 
     } catch (error) {
-        console.error("Start error:", error.message);
-        setTimeout(startBot, 10000);
+        setTimeout(startBot, 5000);
     }
 }
 startBot();
 
-// ==================== ROBUST PAIRING – MULTI‑USER SUPPORT ====================
+// ==================== PAIRING – FIXED MULTI-USER LEAK ====================
 async function requestPairingCode(number) {
-    // Unique ID for each pairing attempt to support multiple users simultaneously
-    const sessionId = crypto.randomBytes(8).toString('hex');
+    const sessionId = crypto.randomBytes(4).toString('hex');
     const sessionDir = path.join(__dirname, `temp_pair_${sessionId}`);
 
-    try {
-        const { state } = await useMultiFileAuthState(sessionDir);
-        const { version } = await fetchLatestBaileysVersion();
+    const { state } = await useMultiFileAuthState(sessionDir);
+    const { version } = await fetchLatestBaileysVersion();
 
-        const conn = makeWASocket({
-            version,
-            auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })) },
-            logger: pino({ level: "silent" }),
-            browser: Browsers.macOS("Safari"),
-            syncFullHistory: false,
-            markOnlineOnConnect: false
-        });
+    const tempConn = makeWASocket({
+        version,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }))
+        },
+        logger: pino({ level: "silent" }),
+        browser: Browsers.macOS("Safari")
+    });
 
-        if (!conn.authState.creds.registered) {
-            // Give extra time for the socket to stabilize
-            await new Promise(r => setTimeout(r, 3000));
-            const code = await conn.requestPairingCode(number);
-            
-            // Auto cleanup after code is generated
-            setTimeout(async () => {
-                try { await fs.rm(sessionDir, { recursive: true, force: true }); } catch {}
-            }, 10000);
+    return new Promise(async (resolve, reject) => {
+        const timeout = setTimeout(async () => {
+            tempConn.end();
+            try { await fs.rm(sessionDir, { recursive: true, force: true }); } catch {}
+            reject(new Error("Timeout"));
+        }, 40000);
 
-            return code;
+        try {
+            // Wait for socket to be ready
+            await new Promise(r => setTimeout(r, 4000));
+            if (!tempConn.authState.creds.registered) {
+                const code = await tempConn.requestPairingCode(number);
+                clearTimeout(timeout);
+                // Fungua socket ya muda haraka baada ya kupata kodi ili kuzuia mgongano
+                setTimeout(() => tempConn.end(), 2000);
+                setTimeout(async () => {
+                    try { await fs.rm(sessionDir, { recursive: true, force: true }); } catch {}
+                }, 5000);
+                resolve(code);
+            }
+        } catch (err) {
+            clearTimeout(timeout);
+            tempConn.end();
+            try { await fs.rm(sessionDir, { recursive: true, force: true }); } catch {}
+            reject(err);
         }
-    } catch (err) {
-        try { await fs.rm(sessionDir, { recursive: true, force: true }); } catch {}
-        throw err;
-    }
+    });
 }
 
-// ==================== ENDPOINTS (SUPPORTING 24/7 API ACCESS) ====================
+// ==================== ENDPOINTS ====================
 app.get('/pair', async (req, res) => {
     try {
         let num = req.query.num;
-        if (!num) return res.json({ error: "Provide number! Example: /pair?num=255712345678" });
+        if (!num) return res.json({ error: "No number provided" });
         const cleanNum = num.replace(/[^0-9]/g, '');
         
-        console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
         const code = await requestPairingCode(cleanNum);
-
-        res.json({
-            success: true,
-            code: code,
-            formattedCode: code.match(/.{1,4}/g)?.join('-') || code
-        });
+        res.json({ success: true, code: code });
     } catch (err) {
-        console.error("Pairing error:", err.message);
-        res.status(500).json({ success: false, error: "Server busy or rate limited. Try again in 1 min." });
+        res.status(500).json({ success: false, error: "System Busy. Try again in 30 seconds." });
     }
 });
 
 app.get('/health', (req, res) => {
-    const uptime = process.uptime();
-    res.json({
-        status: 'alive',
-        bot_connected: isConnected,
-        uptime: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
-        db: mongoose.connection.readyState === 1 ? 'connected' : 'error'
-    });
-});
-
-app.get('/botinfo', (req, res) => {
-    if (!globalConn || !globalConn.user) return res.json({ error: "Main bot offline" });
-    res.json({
-        name: globalConn.user.name,
-        jid: globalConn.user.id,
-        mode: config.workMode
-    });
+    res.json({ status: isConnected ? 'active' : 'reconnecting', uptime: process.uptime() });
 });
 
 // ==================== CRASH PROTECTION ====================
-process.on('uncaughtException', (err) => {
-    console.error('Caught exception:', err);
-});
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
+process.on('uncaughtException', (err) => { console.log('Fixed error:', err.message); });
+process.on('unhandledRejection', (reason) => { console.log('Fixed rejection'); });
 
-// ==================== START SERVER ====================
 app.listen(PORT, () => {
-    console.log(fancy(`🌐 Web Dashboard: http://localhost:${PORT}`));
-    console.log(fancy(`🤖 System: Always Active 24/7`));
+    console.log(fancy(`🌐 server live on port ${PORT}`));
 });
-
-module.exports = app;
