@@ -7,70 +7,54 @@ module.exports = {
     name: "menu",
     execute: async (conn, msg, args, { from, pushname }) => {
         try {
-            // 1. Ionekane bot inaandika (Typing...)
-            await conn.sendPresenceUpdate('composing', from);
-
-            // 2. Njia ya kuelekea kwenye folder la commands
             const cmdPath = path.join(__dirname, '../../commands');
             const categories = fs.readdirSync(cmdPath);
-            let totalCmds = 0;
             
-            // 3. Header ya Menu (Premium Horror Style)
-            let menuTxt = `╭── • 🥀 • ──╮\n  ${fancy(config.botName)}\n╰── • 🥀 • ──╯\n\n`;
-            menuTxt += `│ ◦ ${fancy("ꜱᴏᴜʟ")}: ${pushname}\n`;
-            menuTxt += `│ ◦ ${fancy("ᴏᴡɴᴇʀ")}: ${config.ownerName}\n`;
-            menuTxt += `│ ◦ ${fancy("ᴜᴘᴛɪᴍᴇ")}: ${runtime(process.uptime())}\n`;
-            menuTxt += `│ ◦ ${fancy("ᴍᴏᴅᴇ")}: ${config.workMode.toUpperCase()}\n`;
-            menuTxt += `│ ◦ ${fancy("ᴘʀᴇꜰɪx")}: ${config.prefix}\n\n`;
+            // Tengeneza Slides (Cards) kwa ajili ya kila Category
+            let cards = [];
 
-            // 4. Kupitia kila sub-folder na kupanga commands KWA WIMA
-            categories.forEach(cat => {
+            for (const cat of categories) {
                 const files = fs.readdirSync(path.join(cmdPath, cat))
                     .filter(f => f.endsWith('.js'))
                     .map(f => f.replace('.js', ''));
-                
+
                 if (files.length > 0) {
-                    totalCmds += files.length;
-                    menuTxt += `🥀 *${fancy(cat.toUpperCase())}*\n`;
-                    
-                    // Logic ya kupanga commands kwa wima (Kila moja na mstari wake)
-                    files.forEach(file => {
-                        menuTxt += `│ ◦ ${file}\n`;
+                    // Kutengeneza Buttons za kila command kwenye hiyo slide
+                    let buttons = files.map(file => ({
+                        "name": "quick_reply",
+                        "buttonParamsJson": JSON.stringify({
+                            "display_text": `${config.prefix}${file}`,
+                            "id": `${config.prefix}${file}`
+                        })
+                    }));
+
+                    cards.push({
+                        body: { text: `🥀 *${fancy(cat.toUpperCase())} ᴄᴀᴛᴇɢᴏʀʏ*\n\nʜᴇʟʟᴏ ${pushname},\nꜱᴇʟᴇᴄᴛ ᴀ ᴄᴏᴍᴍᴀɴᴅ ʙᴇʟᴏᴡ ᴛᴏ ᴇxᴇᴄᴜᴛᴇ.\n\nᴅᴇᴠ: ${config.developerName}` },
+                        footer: { text: fancy(config.footer) },
+                        header: {
+                            hasMediaAttachment: true,
+                            imageMessage: await prepareWAMessageMedia({ image: { url: config.menuImage } }, { upload: conn.waUploadToServer })
+                        },
+                        nativeFlowMessage: { buttons: buttons }
                     });
-                    menuTxt += `│\n`; // Nafasi kidogo baada ya kila category
+                }
+            }
+
+            // Kutuma Carousel Message (Sliding Menu)
+            const carouselMsg = Object.assign({}, {
+                interactiveMessage: {
+                    body: { text: fancy(`👹 ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ2.1.1 ᴅᴀꜱʜʙᴏᴀʀᴅ\nᴜᴘᴛɪᴍᴇ: ${runtime(process.uptime())}`) },
+                    footer: { text: fancy("ꜱʟɪᴅᴇ ʟᴇꜰᴛ/ʀɪɢʜᴛ ꜰᴏʀ ᴍᴏʀᴇ ᴄᴀᴛᴇɢᴏʀɪᴇꜱ") },
+                    header: { title: fancy(config.botName), hasMediaAttachment: false },
+                    carouselMessage: { cards: cards }
                 }
             });
 
-            menuTxt += `│ ◦ ${fancy("ᴛᴏᴛᴀʟ ᴄᴍᴅꜱ")}: ${totalCmds}\n`;
-            menuTxt += `└──────────────\n${fancy(config.footer)}`;
-
-            // 5. Tuma Menu kwa kutumia picha kutoka config.menuImage
-            await conn.sendMessage(from, { 
-                image: { url: config.menuImage }, // Hapa inavuta: https://files.catbox.moe/irqrap.jpg
-                caption: menuTxt,
-                contextInfo: { 
-                    isForwarded: true, 
-                    forwardingScore: 999,
-                    forwardedNewsletterMessageInfo: { 
-                        newsletterJid: config.newsletterJid, 
-                        newsletterName: config.botName,
-                        serverMessageId: 100
-                    },
-                    // Feature 30: Branding link ya Group/Channel
-                    externalAdReply: {
-                        title: "🥀 ɪɴꜱɪᴅɪᴏᴜꜱ ᴠ2.1.1 🥀",
-                        body: "ᴛʜᴇ ʟᴀꜱᴛ ᴋᴇʏ ᴀᴜᴛᴏᴍᴀᴛɪᴏɴ",
-                        mediaType: 1,
-                        renderLargerThumbnail: true,
-                        thumbnailUrl: config.menuImage,
-                        sourceUrl: config.channelLink
-                    }
-                } 
-            }, { quoted: msg });
+            await conn.relayMessage(from, { viewOnceMessage: { message: carouselMsg } }, {});
 
         } catch (e) {
             console.error(e);
-            msg.reply(fancy("🥀 Shadows failed to manifest the menu..."));
+            msg.reply("🥀 Sliding menu requires the latest WhatsApp version.");
         }
     }
 };
