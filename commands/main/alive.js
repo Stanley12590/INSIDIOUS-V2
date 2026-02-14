@@ -55,7 +55,7 @@ module.exports = {
                         name: "quick_reply",
                         buttonParamsJson: JSON.stringify({
                             display_text: "🔄 Refresh",
-                            id: `${config.prefix}status`
+                            id: `${config.prefix}status`  // ID includes prefix
                         })
                     }]
                 }
