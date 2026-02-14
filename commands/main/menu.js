@@ -1,124 +1,83 @@
+const fs = require('fs-extra');
+const path = require('path');
 const config = require('../../config');
 const { fancy, runtime } = require('../../lib/tools');
 const { proto, generateWAMessageFromContent, prepareWAMessageMedia } = require('@whiskeysockets/baileys');
 
 module.exports = {
-    name: "status",
-    aliases: ["ping", "alive", "runtime"],
-    description: "Show bot status with sliding cards",
-    
+    name: "menu",
     execute: async (conn, msg, args, { from, sender, pushname }) => {
         try {
-            // Get user's display name
+            // Get user's display name (fallback if pushname is undefined)
             let userName = pushname;
             if (!userName) {
                 const contact = await conn.getContact(sender);
                 userName = contact?.name || contact?.pushname || sender.split('@')[0];
             }
 
-            // Prepare image media
-            const imageMedia = await prepareWAMessageMedia(
-                { image: { url: config.botImage } },
-                { upload: conn.waUploadToServer }
-            );
-
-            // Calculate ping
-            const messageTimestamp = msg.messageTimestamp ? msg.messageTimestamp * 1000 : Date.now();
-            const ping = Date.now() - messageTimestamp;
-
-            // Uptime
-            const uptime = runtime(process.uptime());
-
-            // Create cards
+            const cmdPath = path.join(__dirname, '../../commands');
+            const categories = fs.readdirSync(cmdPath);
+            
             const cards = [];
 
-            // Card 1: Ping
-            cards.push({
-                body: { text: fancy(
-                    `━━━━━━━━━━━━━━━━━━\n` +
-                    `   🏓 *PING*\n` +
-                    `━━━━━━━━━━━━━━━━━━\n\n` +
-                    `📶 Response Time: *${ping}ms*\n\n` +
-                    `🤖 Bot is responsive.`
-                ) },
-                footer: { text: fancy(config.footer) },
-                header: {
-                    hasMediaAttachment: true,
-                    imageMessage: imageMedia.imageMessage
-                },
-                nativeFlowMessage: {
-                    buttons: [{
-                        name: "quick_reply",
-                        buttonParamsJson: JSON.stringify({
-                            display_text: "🔄 Refresh",
-                            id: `${config.prefix}status`
-                        })
-                    }]
-                }
-            });
+            for (const cat of categories) {
+                const catPath = path.join(cmdPath, cat);
+                const stat = fs.statSync(catPath);
+                if (!stat.isDirectory()) continue;
+                
+                const files = fs.readdirSync(catPath)
+                    .filter(f => f.endsWith('.js'))
+                    .map(f => f.replace('.js', ''));
 
-            // Card 2: Alive
-            cards.push({
-                body: { text: fancy(
-                    `━━━━━━━━━━━━━━━━━━\n` +
-                    `   🤖 *ALIVE*\n` +
-                    `━━━━━━━━━━━━━━━━━━\n\n` +
-                    `✨ Bot Name: ${config.botName}\n` +
-                    `👑 Developer: ${config.developerName}\n` +
-                    `📦 Version: ${config.version}\n\n` +
-                    `✅ I'm alive and ready!`
-                ) },
-                footer: { text: fancy(config.footer) },
-                header: {
-                    hasMediaAttachment: true,
-                    imageMessage: imageMedia.imageMessage
-                },
-                nativeFlowMessage: {
-                    buttons: [{
-                        name: "quick_reply",
-                        buttonParamsJson: JSON.stringify({
-                            display_text: "🔄 Refresh",
-                            id: `${config.prefix}status`
-                        })
-                    }]
-                }
-            });
+                if (files.length === 0) continue;
 
-            // Card 3: Runtime
-            cards.push({
-                body: { text: fancy(
-                    `━━━━━━━━━━━━━━━━━━\n` +
-                    `   ⏱️ *RUNTIME*\n` +
-                    `━━━━━━━━━━━━━━━━━━\n\n` +
-                    `🕐 Uptime: *${uptime}*\n\n` +
-                    `Bot has been running for ${uptime}.`
-                ) },
-                footer: { text: fancy(config.footer) },
-                header: {
-                    hasMediaAttachment: true,
-                    imageMessage: imageMedia.imageMessage
-                },
-                nativeFlowMessage: {
-                    buttons: [{
-                        name: "quick_reply",
-                        buttonParamsJson: JSON.stringify({
-                            display_text: "🔄 Refresh",
-                            id: `${config.prefix}status`
-                        })
-                    }]
-                }
-            });
+                // Create buttons for each command (premium design with emojis)
+                const buttons = files.map(cmd => ({
+                    name: "quick_reply",
+                    buttonParamsJson: JSON.stringify({
+                        display_text: `✨ ${config.prefix}${cmd}`,
+                        id: `${config.prefix}${cmd}`
+                    })
+                }));
 
-            // Build interactive message
+                // Prepare image media for this card
+                const imageMedia = await prepareWAMessageMedia(
+                    { image: { url: config.menuImage } },
+                    { upload: conn.waUploadToServer }
+                );
+
+                // Build card with premium styling
+                const card = {
+                    body: { text: fancy(
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `   🥀 *${cat.toUpperCase()} CATEGORY*\n` +
+                        `━━━━━━━━━━━━━━━━━━\n\n` +
+                        `👋 Hello, *${userName}*!\n` +
+                        `Select a command below to execute.\n\n` +
+                        `👑 Developer: ${config.developerName}`
+                    ) },
+                    footer: { text: fancy(config.footer) },
+                    header: {
+                        hasMediaAttachment: true,
+                        imageMessage: imageMedia.imageMessage
+                    },
+                    nativeFlowMessage: {
+                        buttons: buttons
+                    }
+                };
+                cards.push(card);
+            }
+
+            // Main interactive message (premium dashboard)
             const interactiveMessage = {
                 body: { text: fancy(
                     `━━━━━━━━━━━━━━━━━━\n` +
-                    `   📊 *BOT STATUS DASHBOARD*\n` +
+                    `   👹 *INSIDIOUS V2.1.1*  \n` +
                     `━━━━━━━━━━━━━━━━━━\n\n` +
-                    `👋 Hello, *${userName}*!\n` +
-                    `Swipe to view details.`
+                    `⏱️ Uptime: ${runtime(process.uptime())}\n\n` +
+                    `👤 User: ${userName}`
                 ) },
-                footer: { text: fancy("◀️ Slide left/right for more info ▶️") },
+                footer: { text: fancy("◀️ Slide left/right for more categories ▶️") },
                 header: {
                     title: fancy(config.botName),
                     hasMediaAttachment: false
@@ -128,7 +87,7 @@ module.exports = {
                 }
             };
 
-            // Send as regular interactive message (not view once)
+            // Generate and send the message (NOT view once, so it stays visible)
             const waMessage = generateWAMessageFromContent(from, { interactiveMessage }, {
                 userJid: conn.user.id,
                 upload: conn.waUploadToServer
@@ -136,10 +95,25 @@ module.exports = {
             await conn.relayMessage(from, waMessage.message, { messageId: waMessage.key.id });
 
         } catch (e) {
-            console.error("Status error:", e);
-            // Fallback plain text
-            const uptime = runtime(process.uptime());
-            const text = `🏓 *PING:* Response time ...\n🤖 *ALIVE:* Bot is online\n⏱️ *RUNTIME:* ${uptime}`;
+            console.error("Menu error:", e);
+            // Fallback plain text menu for unsupported devices
+            let text = `╭─── • 🥀 • ───╮\n`;
+            text += `   *INSIDIOUS MENU*  \n`;
+            text += `╰─── • 🥀 • ───╯\n\n`;
+            text += `Hello ${userName || 'User'},\n\n`;
+            
+            const cmdPath = path.join(__dirname, '../../commands');
+            const categories = fs.readdirSync(cmdPath);
+            for (const cat of categories) {
+                const catPath = path.join(cmdPath, cat);
+                if (!fs.statSync(catPath).isDirectory()) continue;
+                const files = fs.readdirSync(catPath).filter(f => f.endsWith('.js')).map(f => f.replace('.js', ''));
+                if (files.length) {
+                    text += `*${cat.toUpperCase()}*\n`;
+                    text += files.map(cmd => `${config.prefix}${cmd}`).join(', ') + '\n\n';
+                }
+            }
+            text += `\n_Uptime: ${runtime(process.uptime())}_`;
             await conn.sendMessage(from, { text: fancy(text) }, { quoted: msg });
         }
     }
