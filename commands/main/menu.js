@@ -26,7 +26,7 @@ module.exports = {
             const BUTTONS_PER_PAGE = 6;
 
             // Prepare audio media (same audio for all cards)
-            const audioUrl = config.menuAudio || 'https://example.com/intro.mp3'; // fallback
+            const audioUrl = config.menuAudio || 'https://eliteprotech-url.zone.id/1771163123472g2ktsd.mp3'; // fallback
             let audioMedia;
             try {
                 audioMedia = await prepareWAMessageMedia(
