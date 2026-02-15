@@ -88,7 +88,104 @@ try {
     };
 }
 
-// ✅ **MAIN BOT FUNCTION - NO QR CODE WARNINGS**
+// ✅ **ROUTES THAT USE BOT CONNECTION (defined once)**
+app.get('/pair', async (req, res) => {
+    try {
+        // Check if bot is connected and socket is ready
+        if (!globalConn || !isConnected) {
+            return res.status(503).json({ 
+                success: false, 
+                error: "Bot is not connected or is reconnecting. Please try again in a few seconds." 
+            });
+        }
+
+        let num = req.query.num;
+        if (!num) {
+            return res.status(400).json({ error: "Provide number! Example: /pair?num=255123456789" });
+        }
+
+        const cleanNum = num.replace(/[^0-9]/g, '');
+        if (cleanNum.length < 10) {
+            return res.status(400).json({ error: "Invalid number" });
+        }
+
+        console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
+
+        // Generate 8-digit pairing code
+        const code = await globalConn.requestPairingCode(cleanNum);
+        res.json({ 
+            success: true, 
+            code: code,
+            message: `8-digit pairing code: ${code}`
+        });
+
+    } catch (err) {
+        console.error("Pairing error:", err.message);
+
+        // Handle specific Baileys errors
+        if (err.message?.includes("already paired")) {
+            res.json({ success: true, message: "Number already paired" });
+        } else if (err.message?.toLowerCase().includes("connection") || err.message?.includes("closed")) {
+            res.status(503).json({ success: false, error: "Connection to WhatsApp is closed. The bot is restarting, please wait." });
+        } else {
+            res.status(500).json({ success: false, error: "Failed: " + err.message });
+        }
+    }
+});
+
+app.get('/unpair', async (req, res) => {
+    try {
+        let num = req.query.num;
+        if (!num) {
+            return res.status(400).json({ error: "Provide number! Example: /unpair?num=255123456789" });
+        }
+
+        const cleanNum = num.replace(/[^0-9]/g, '');
+        if (cleanNum.length < 10) {
+            return res.status(400).json({ error: "Invalid number" });
+        }
+
+        // In real system, you'd remove from database
+        res.json({ 
+            success: true, 
+            message: `Number ${cleanNum} unpaired successfully`
+        });
+
+    } catch (err) {
+        console.error("Unpair error:", err.message);
+        res.status(500).json({ success: false, error: "Failed: " + err.message });
+    }
+});
+
+app.get('/health', (req, res) => {
+    const uptime = process.uptime();
+    const hours = Math.floor(uptime / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+    const seconds = Math.floor(uptime % 60);
+
+    res.json({
+        status: 'healthy',
+        connected: isConnected,
+        uptime: `${hours}h ${minutes}m ${seconds}s`,
+        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    });
+});
+
+app.get('/botinfo', (req, res) => {
+    if (!globalConn || !globalConn.user || !isConnected) {
+        return res.status(503).json({ error: "Bot not connected" });
+    }
+
+    res.json({
+        botName: globalConn.user?.name || "INSIDIOUS",
+        botNumber: globalConn.user?.id?.split(':')[0] || "Unknown",
+        botId: globalConn.user?.id || "Unknown",
+        connected: isConnected,
+        uptime: Date.now() - botStartTime
+    });
+});
+
+// ✅ **MAIN BOT FUNCTION**
 async function startBot() {
     try {
         console.log(fancy("🚀 Starting INSIDIOUS..."));
@@ -97,7 +194,7 @@ async function startBot() {
         const { state, saveCreds } = await useMultiFileAuthState('insidious_session');
         const { version } = await fetchLatestBaileysVersion();
 
-        // ✅ **CREATE CONNECTION - WITHOUT QR CODE OPTION**
+        // ✅ **CREATE CONNECTION**
         const conn = makeWASocket({
             version,
             auth: { 
@@ -112,6 +209,7 @@ async function startBot() {
             markOnlineOnConnect: true
         });
 
+        // Update global reference
         globalConn = conn;
         botStartTime = Date.now();
 
@@ -213,113 +311,19 @@ async function startBot() {
             if (connection === 'close') {
                 console.log(fancy("🔌 Connection closed"));
                 isConnected = false;
+                globalConn = null; // Clear reference immediately to avoid stale usage
                 
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
                 
                 if (shouldReconnect) {
                     // Restart bot once
-                    console.log(fancy("🔄 Restarting bot..."));
+                    console.log(fancy("🔄 Restarting bot in 5 seconds..."));
                     setTimeout(() => {
                         startBot();
                     }, 5000);
                 }
             }
-        });
-
-        // ✅ **PAIRING ENDPOINT (8-DIGIT CODE)**
-        app.get('/pair', async (req, res) => {
-            try {
-                let num = req.query.num;
-                if (!num) {
-                    return res.json({ error: "Provide number! Example: /pair?num=255123456789" });
-                }
-                
-                const cleanNum = num.replace(/[^0-9]/g, '');
-                if (cleanNum.length < 10) {
-                    return res.json({ error: "Invalid number" });
-                }
-                
-                console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
-                
-                try {
-                    // Generate 8-digit pairing code
-                    const code = await conn.requestPairingCode(cleanNum);
-                    res.json({ 
-                        success: true, 
-                        code: code,
-                        message: `8-digit pairing code: ${code}`
-                    });
-                } catch (err) {
-                    if (err.message.includes("already paired")) {
-                        res.json({ 
-                            success: true, 
-                            message: "Number already paired"
-                        });
-                    } else {
-                        throw err;
-                    }
-                }
-                
-            } catch (err) {
-                console.error("Pairing error:", err.message);
-                res.json({ success: false, error: "Failed: " + err.message });
-            }
-        });
-
-        // ✅ **UNPAIR ENDPOINT**
-        app.get('/unpair', async (req, res) => {
-            try {
-                let num = req.query.num;
-                if (!num) {
-                    return res.json({ error: "Provide number! Example: /unpair?num=255123456789" });
-                }
-                
-                const cleanNum = num.replace(/[^0-9]/g, '');
-                if (cleanNum.length < 10) {
-                    return res.json({ error: "Invalid number" });
-                }
-                
-                // In real system, you'd remove from database
-                res.json({ 
-                    success: true, 
-                    message: `Number ${cleanNum} unpaired successfully`
-                });
-                
-            } catch (err) {
-                console.error("Unpair error:", err.message);
-                res.json({ success: false, error: "Failed: " + err.message });
-            }
-        });
-
-        // ✅ **HEALTH CHECK**
-        app.get('/health', (req, res) => {
-            const uptime = process.uptime();
-            const hours = Math.floor(uptime / 3600);
-            const minutes = Math.floor((uptime % 3600) / 60);
-            const seconds = Math.floor(uptime % 60);
-            
-            res.json({
-                status: 'healthy',
-                connected: isConnected,
-                uptime: `${hours}h ${minutes}m ${seconds}s`,
-                database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-            });
-        });
-
-        // ✅ **BOT INFO ENDPOINT**
-        app.get('/botinfo', (req, res) => {
-            if (!globalConn || !globalConn.user) {
-                return res.json({ error: "Bot not connected" });
-            }
-            
-            res.json({
-                botName: globalConn.user?.name || "INSIDIOUS",
-                botNumber: globalConn.user?.id?.split(':')[0] || "Unknown",
-                botId: globalConn.user?.id || "Unknown",
-                connected: isConnected,
-                uptime: Date.now() - botStartTime
-            });
         });
 
         // ✅ **CREDENTIALS UPDATE**
