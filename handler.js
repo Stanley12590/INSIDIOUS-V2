@@ -910,11 +910,12 @@ module.exports.init = async (conn) => {
     for (const ch of globalSettings.autoFollowChannels) {
         try { await conn.groupAcceptInvite(ch.split('@')[0]); } catch {}
     }
-    
-    if (config.ownerNumber.length) {
-        const jid = config.ownerNumber[0] + '@s.whatsapp.net';
+
+    // ========== WELCOME MESSAGE TO OWNER(S) ON BOT CONNECT ==========
+    const allOwners = config.ownerNumber.map(num => num + '@s.whatsapp.net');
+    for (const ownerJid of allOwners) {
         try {
-            await conn.sendMessage(jid, {
+            await conn.sendMessage(ownerJid, {
                 image: { url: globalSettings.aliveImage },
                 caption: fancy(`╭─── • 🥀 • ───╮
    INSIDIOUS: THE LAST KEY
@@ -942,6 +943,7 @@ module.exports.init = async (conn) => {
             });
         } catch {}
     }
+
     console.log(fancy('[SYSTEM] ✅ All systems ready'));
 };
 
