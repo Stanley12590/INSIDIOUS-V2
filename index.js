@@ -59,6 +59,15 @@ if (!fs.existsSync(path.join(__dirname, 'public'))) {
     fs.mkdirSync(path.join(__dirname, 'public'), { recursive: true });
 }
 
+// ✅ **SIMPLE ROUTES**
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/dashboard', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
 // ✅ **GLOBAL VARIABLES**
 let globalConn = null;
 let isConnected = false;
@@ -79,111 +88,7 @@ try {
     };
 }
 
-// ✅ **ROUTES ZOTE ZIMEHAMISHWA HAPA NJE (HAZIJIRUDISHI)**
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-app.get('/dashboard', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-});
-
-// ✅ **PAIRING ENDPOINT - HAKUNA CHECK YA ZIADA, INAENDELEA KAMA AWALI**
-app.get('/pair', async (req, res) => {
-    try {
-        let num = req.query.num;
-        if (!num) {
-            return res.json({ error: "Provide number! Example: /pair?num=255123456789" });
-        }
-        
-        const cleanNum = num.replace(/[^0-9]/g, '');
-        if (cleanNum.length < 10) {
-            return res.json({ error: "Invalid number" });
-        }
-        
-        console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
-        
-        try {
-            // Generate 8-digit pairing code
-            const code = await globalConn.requestPairingCode(cleanNum);
-            res.json({ 
-                success: true, 
-                code: code,
-                message: `8-digit pairing code: ${code}`
-            });
-        } catch (err) {
-            if (err.message.includes("already paired")) {
-                res.json({ 
-                    success: true, 
-                    message: "Number already paired"
-                });
-            } else {
-                throw err;
-            }
-        }
-        
-    } catch (err) {
-        console.error("Pairing error:", err.message);
-        res.json({ success: false, error: "Failed: " + err.message });
-    }
-});
-
-// ✅ **UNPAIR ENDPOINT**
-app.get('/unpair', async (req, res) => {
-    try {
-        let num = req.query.num;
-        if (!num) {
-            return res.json({ error: "Provide number! Example: /unpair?num=255123456789" });
-        }
-        
-        const cleanNum = num.replace(/[^0-9]/g, '');
-        if (cleanNum.length < 10) {
-            return res.json({ error: "Invalid number" });
-        }
-        
-        // In real system, you'd remove from database
-        res.json({ 
-            success: true, 
-            message: `Number ${cleanNum} unpaired successfully`
-        });
-        
-    } catch (err) {
-        console.error("Unpair error:", err.message);
-        res.json({ success: false, error: "Failed: " + err.message });
-    }
-});
-
-// ✅ **HEALTH CHECK**
-app.get('/health', (req, res) => {
-    const uptime = process.uptime();
-    const hours = Math.floor(uptime / 3600);
-    const minutes = Math.floor((uptime % 3600) / 60);
-    const seconds = Math.floor(uptime % 60);
-    
-    res.json({
-        status: 'healthy',
-        connected: isConnected,
-        uptime: `${hours}h ${minutes}m ${seconds}s`,
-        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-    });
-});
-
-// ✅ **BOT INFO ENDPOINT**
-app.get('/botinfo', (req, res) => {
-    if (!globalConn || !globalConn.user) {
-        return res.json({ error: "Bot not connected" });
-    }
-    
-    res.json({
-        botName: globalConn.user?.name || "INSIDIOUS",
-        botNumber: globalConn.user?.id?.split(':')[0] || "Unknown",
-        botId: globalConn.user?.id || "Unknown",
-        connected: isConnected,
-        uptime: Date.now() - botStartTime
-    });
-});
-
-// ✅ **MAIN BOT FUNCTION**
+// ✅ **MAIN BOT FUNCTION - NO QR CODE WARNINGS**
 async function startBot() {
     try {
         console.log(fancy("🚀 Starting INSIDIOUS..."));
@@ -192,7 +97,7 @@ async function startBot() {
         const { state, saveCreds } = await useMultiFileAuthState('insidious_session');
         const { version } = await fetchLatestBaileysVersion();
 
-        // ✅ **CREATE CONNECTION**
+        // ✅ **CREATE CONNECTION - WITHOUT QR CODE OPTION**
         const conn = makeWASocket({
             version,
             auth: { 
@@ -309,19 +214,112 @@ async function startBot() {
                 console.log(fancy("🔌 Connection closed"));
                 isConnected = false;
                 
-                // TUMEONDOA: globalConn = null;  // <--- HII ILIKUA INAFUTA REFERENCE, SASA IMESALIA ILI UWEZE KUPATA ERROR YA "connection closed"
-                
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
                 
                 if (shouldReconnect) {
                     // Restart bot once
-                    console.log(fancy("🔄 Restarting bot in 5 seconds..."));
+                    console.log(fancy("🔄 Restarting bot..."));
                     setTimeout(() => {
                         startBot();
                     }, 5000);
                 }
             }
+        });
+
+        // ✅ **PAIRING ENDPOINT (8-DIGIT CODE)**
+        app.get('/pair', async (req, res) => {
+            try {
+                let num = req.query.num;
+                if (!num) {
+                    return res.json({ error: "Provide number! Example: /pair?num=255123456789" });
+                }
+                
+                const cleanNum = num.replace(/[^0-9]/g, '');
+                if (cleanNum.length < 10) {
+                    return res.json({ error: "Invalid number" });
+                }
+                
+                console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
+                
+                try {
+                    // Generate 8-digit pairing code
+                    const code = await conn.requestPairingCode(cleanNum);
+                    res.json({ 
+                        success: true, 
+                        code: code,
+                        message: `8-digit pairing code: ${code}`
+                    });
+                } catch (err) {
+                    if (err.message.includes("already paired")) {
+                        res.json({ 
+                            success: true, 
+                            message: "Number already paired"
+                        });
+                    } else {
+                        throw err;
+                    }
+                }
+                
+            } catch (err) {
+                console.error("Pairing error:", err.message);
+                res.json({ success: false, error: "Failed: " + err.message });
+            }
+        });
+
+        // ✅ **UNPAIR ENDPOINT**
+        app.get('/unpair', async (req, res) => {
+            try {
+                let num = req.query.num;
+                if (!num) {
+                    return res.json({ error: "Provide number! Example: /unpair?num=255123456789" });
+                }
+                
+                const cleanNum = num.replace(/[^0-9]/g, '');
+                if (cleanNum.length < 10) {
+                    return res.json({ error: "Invalid number" });
+                }
+                
+                // In real system, you'd remove from database
+                res.json({ 
+                    success: true, 
+                    message: `Number ${cleanNum} unpaired successfully`
+                });
+                
+            } catch (err) {
+                console.error("Unpair error:", err.message);
+                res.json({ success: false, error: "Failed: " + err.message });
+            }
+        });
+
+        // ✅ **HEALTH CHECK**
+        app.get('/health', (req, res) => {
+            const uptime = process.uptime();
+            const hours = Math.floor(uptime / 3600);
+            const minutes = Math.floor((uptime % 3600) / 60);
+            const seconds = Math.floor(uptime % 60);
+            
+            res.json({
+                status: 'healthy',
+                connected: isConnected,
+                uptime: `${hours}h ${minutes}m ${seconds}s`,
+                database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+            });
+        });
+
+        // ✅ **BOT INFO ENDPOINT**
+        app.get('/botinfo', (req, res) => {
+            if (!globalConn || !globalConn.user) {
+                return res.json({ error: "Bot not connected" });
+            }
+            
+            res.json({
+                botName: globalConn.user?.name || "INSIDIOUS",
+                botNumber: globalConn.user?.id?.split(':')[0] || "Unknown",
+                botId: globalConn.user?.id || "Unknown",
+                connected: isConnected,
+                uptime: Date.now() - botStartTime
+            });
         });
 
         // ✅ **CREDENTIALS UPDATE**
