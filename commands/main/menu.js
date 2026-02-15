@@ -23,8 +23,6 @@ module.exports = {
             const categories = fs.readdirSync(cmdPath);
             
             const cards = [];
-
-            // Maximum buttons per card – adjust as needed
             const BUTTONS_PER_PAGE = 6;
 
             for (const cat of categories) {
@@ -38,29 +36,27 @@ module.exports = {
 
                 if (files.length === 0) continue;
 
-                // Prepare image media once per category (same image for all pages)
                 const imageMedia = await prepareWAMessageMedia(
                     { image: { url: config.menuImage } },
                     { upload: conn.waUploadToServer }
                 );
 
-                // Split files into pages if needed
+                // Split into pages
                 const pages = [];
                 for (let i = 0; i < files.length; i += BUTTONS_PER_PAGE) {
                     pages.push(files.slice(i, i + BUTTONS_PER_PAGE));
                 }
 
-                // Create one card per page
                 pages.forEach((pageFiles, pageIndex) => {
                     const buttons = pageFiles.map(cmd => ({
                         name: "quick_reply",
                         buttonParamsJson: JSON.stringify({
                             display_text: `${config.prefix}${cmd}`,
-                            id: `${config.prefix}${cmd}`
+                            id: `${config.prefix}${cmd}` // This sends the full command when clicked
                         })
                     }));
 
-                    // Add navigation buttons only if there are multiple pages
+                    // Navigation buttons
                     if (pages.length > 1) {
                         if (pageIndex > 0) {
                             buttons.push({
@@ -82,7 +78,6 @@ module.exports = {
                         }
                     }
 
-                    // Build card using plain objects
                     const card = {
                         body: { text: fancy(
                             `━━━━━━━━━━━━━━━━━━\n` +
@@ -105,7 +100,6 @@ module.exports = {
                 });
             }
 
-            // Build main interactive message
             const interactiveMessage = {
                 body: { text: fancy(
                     `━━━━━━━━━━━━━━━━━━\n` +
@@ -124,12 +118,7 @@ module.exports = {
                 }
             };
 
-            // Wrap in the correct message container
-            const messageContent = {
-                interactiveMessage: interactiveMessage
-            };
-
-            // Generate and send
+            const messageContent = { interactiveMessage };
             const waMessage = generateWAMessageFromContent(from, messageContent, {
                 userJid: conn.user.id,
                 upload: conn.waUploadToServer
