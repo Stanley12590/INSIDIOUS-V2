@@ -51,7 +51,7 @@ module.exports = {
     // ==================== CHANNEL / GROUP ====================
     newsletterJid: getConfig('NEWSLETTER_JID', "120363404317544295@newsletter"),
     requiredGroupJid: getConfig('GROUP_JID', "120363406549688641@g.us"),
-    requiredGroupInvite: getConfig('GROUP_INVITE', "https://chat.whatsapp.com/J19JASXoaK0GVSoRvShr4Y"),
+    requiredGroupInvite: getConfig('GROUP_INVITE', "https://chat.whatsapp.com/J19JASXoaK0GVSoRvShr4Y?mode=gi_t"),
     autoFollowChannels: parseArray(getConfig('AUTO_FOLLOW_CHANNELS', "120363404317544295@newsletter")),
 
     // ==================== DATABASE ====================
