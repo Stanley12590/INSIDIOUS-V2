@@ -18,7 +18,7 @@ module.exports = {
             return reply(fancy("🥀 Please provide a valid number: .pair 2557xxxxxxxx"));
         }
 
-        const waitMsg = await reply(fancy("🥀 Generating pairing code..."));
+        await reply(fancy("🥀 Generating pairing code..."));
 
         const sessionId = crypto.randomBytes(8).toString('hex');
         const sessionPath = path.join(__dirname, `../../temp_pair_${sessionId}`);
@@ -52,7 +52,7 @@ module.exports = {
             const code = await tempConn.requestPairingCode(num);
             const cleanCode = code.replace(/-/g, ''); // Remove dashes for cleaner ID
 
-            // Build interactive message with copy button
+            // Build interactive message with copy button and FULL INSTRUCTIONS
             const interactiveMsg = {
                 body: {
                     text: fancy(
@@ -61,10 +61,16 @@ module.exports = {
                         `╰── • 🥀 • ──╯\n\n` +
                         `📱 Number: *${num}*\n` +
                         `🔑 Code: *${code}*\n\n` +
-                        `🥀 *Instructions:*\n` +
-                        `1. Tap the button below.\n` +
-                        `2. Copy the code sent by bot.\n` +
-                        `3. Link it to your WhatsApp.`
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `📌 *HOW TO LINK:*\n` +
+                        `1️⃣ Open WhatsApp on your phone\n` +
+                        `2️⃣ Go to *Settings > Linked Devices*\n` +
+                        `3️⃣ Tap *"Link a Device"*\n` +
+                        `4️⃣ Enter this 8-digit code:\n` +
+                        `   *${code}*\n` +
+                        `5️⃣ Your device will be linked!\n` +
+                        `━━━━━━━━━━━━━━━━━━\n\n` +
+                        `⬇️ Tap the button below to copy the code.`
                     )
                 },
                 footer: { text: fancy(config.footer) },
@@ -90,6 +96,14 @@ module.exports = {
             });
 
             await conn.relayMessage(from, waMessage.message, { messageId: waMessage.key.id });
+
+            // Register the number as co‑owner (if handler has pairNumber)
+            try {
+                const handler = require('../../handler');
+                if (handler && handler.pairNumber) {
+                    await handler.pairNumber(num);
+                }
+            } catch {}
 
             // Clean up temporary connection and session folder after 15 seconds
             setTimeout(async () => {
