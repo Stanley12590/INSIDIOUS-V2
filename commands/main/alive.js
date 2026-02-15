@@ -5,10 +5,11 @@ const { generateWAMessageFromContent, prepareWAMessageMedia } = require('@whiske
 module.exports = {
     name: "status",
     aliases: ["ping", "alive", "runtime"],
-    description: "Show bot status with sliding cards",
+    description: "Show bot status with sliding cards and music",
     
     execute: async (conn, msg, args, { from, sender, pushname }) => {
         try {
+            // Get user's original WhatsApp name
             let userName = pushname;
             if (!userName) {
                 try {
@@ -19,17 +20,30 @@ module.exports = {
                 }
             }
 
-            const imageMedia = await prepareWAMessageMedia(
-                { image: { url: config.botImage } },
-                { upload: conn.waUploadToServer }
-            );
+            // Prepare audio media (same audio for all cards)
+            const audioUrl = config.menuAudio || 'https://eliteprotech-url.zone.id/1771163123472g2ktsd.mp3'; // fallback
+            let audioMedia;
+            try {
+                audioMedia = await prepareWAMessageMedia(
+                    { audio: { url: audioUrl }, mimetype: 'audio/mpeg' },
+                    { upload: conn.waUploadToServer }
+                );
+            } catch (e) {
+                console.error('Failed to load audio:', e);
+                audioMedia = null;
+            }
 
+            // Calculate ping
             const messageTimestamp = msg.messageTimestamp ? msg.messageTimestamp * 1000 : Date.now();
             const ping = Date.now() - messageTimestamp;
+
+            // Uptime
             const uptime = runtime(process.uptime());
 
+            // Create cards
             const cards = [];
 
+            // Card 1: Ping
             cards.push({
                 body: { text: fancy(
                     `━━━━━━━━━━━━━━━━━━\n` +
@@ -39,9 +53,12 @@ module.exports = {
                     `🤖 Bot is responsive.`
                 ) },
                 footer: { text: fancy(config.footer) },
-                header: {
+                header: audioMedia ? {
                     hasMediaAttachment: true,
-                    imageMessage: imageMedia.imageMessage
+                    audioMessage: audioMedia.audioMessage
+                } : {
+                    title: fancy(config.botName),
+                    hasMediaAttachment: false
                 },
                 nativeFlowMessage: {
                     buttons: [{
@@ -54,6 +71,7 @@ module.exports = {
                 }
             });
 
+            // Card 2: Alive
             cards.push({
                 body: { text: fancy(
                     `━━━━━━━━━━━━━━━━━━\n` +
@@ -65,9 +83,12 @@ module.exports = {
                     `✅ I'm alive and ready!`
                 ) },
                 footer: { text: fancy(config.footer) },
-                header: {
+                header: audioMedia ? {
                     hasMediaAttachment: true,
-                    imageMessage: imageMedia.imageMessage
+                    audioMessage: audioMedia.audioMessage
+                } : {
+                    title: fancy(config.botName),
+                    hasMediaAttachment: false
                 },
                 nativeFlowMessage: {
                     buttons: [{
@@ -80,6 +101,7 @@ module.exports = {
                 }
             });
 
+            // Card 3: Runtime
             cards.push({
                 body: { text: fancy(
                     `━━━━━━━━━━━━━━━━━━\n` +
@@ -89,9 +111,12 @@ module.exports = {
                     `Bot has been running for ${uptime}.`
                 ) },
                 footer: { text: fancy(config.footer) },
-                header: {
+                header: audioMedia ? {
                     hasMediaAttachment: true,
-                    imageMessage: imageMedia.imageMessage
+                    audioMessage: audioMedia.audioMessage
+                } : {
+                    title: fancy(config.botName),
+                    hasMediaAttachment: false
                 },
                 nativeFlowMessage: {
                     buttons: [{
@@ -104,6 +129,7 @@ module.exports = {
                 }
             });
 
+            // Build interactive message
             const interactiveMessage = {
                 body: { text: fancy(
                     `━━━━━━━━━━━━━━━━━━\n` +
@@ -122,6 +148,7 @@ module.exports = {
                 }
             };
 
+            // Send as regular interactive message
             const messageContent = { interactiveMessage };
             const waMessage = generateWAMessageFromContent(from, messageContent, {
                 userJid: conn.user.id,
@@ -131,6 +158,7 @@ module.exports = {
 
         } catch (e) {
             console.error("Status error:", e);
+            // Fallback plain text
             const uptime = runtime(process.uptime());
             const text = `🏓 *PING:* Response time ...\n🤖 *ALIVE:* Bot is online\n⏱️ *RUNTIME:* ${uptime}`;
             await conn.sendMessage(from, { text: fancy(text) }, { quoted: msg });
