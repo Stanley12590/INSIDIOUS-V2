@@ -1,8 +1,8 @@
-const handler = require('../../handler');
+const handler = require('../../handler'); // hakikisha handler ina exports zinazohitajika
 
 module.exports = {
     name: "settings",
-    aliases: ["setting", "config"],
+    aliases: ["setting", "config", "settingan"],
     ownerOnly: true,
     description: "View and change bot global settings",
     usage: "[feature] [value]",
@@ -11,8 +11,8 @@ module.exports = {
         if (!isOwner) 
             return reply("❌ This command is for owner only!");
 
-        // Load current settings
-        let settings = await handler.loadSettings();
+        // Load current global settings
+        let settings = await handler.loadGlobalSettings(); // tumia loadGlobalSettings
 
         // -------------------- SHOW ALL SETTINGS --------------------
         if (args.length === 0) {
@@ -89,9 +89,9 @@ module.exports = {
 
         // -------------------- CHANGE SPECIFIC SETTING --------------------
         let feature = args[0].toLowerCase();
-        const value = args.slice(1).join(' ');
+        const value = args.slice(1).join(' ').trim();
 
-        // Normalise common aliases
+        // Feature aliases mapping
         const featureMap = {
             // Anti
             'antilink': 'antilink', 'anti-link': 'antilink',
@@ -191,14 +191,15 @@ module.exports = {
         }
         // --- Array (not handled here) ---
         else if (Array.isArray(oldValue)) {
-            return reply(`❌ Array settings (e.g., scamKeywords, blockedCountries) must be managed via dedicated commands.`);
+            return reply(`❌ Array settings (e.g., scamKeywords, blockedCountries, autoReactEmojis) must be managed via dedicated commands.\n` +
+                `Use *${settings.prefix}addkeyword*, *${settings.prefix}removekeyword*, etc.`);
         }
         else {
             return reply(`❌ Unsupported setting type.`);
         }
 
         // Save and refresh
-        await handler.saveSettings(settings);
+        await handler.saveGlobalSettings(settings); // tumia saveGlobalSettings
         await handler.refreshConfig();
 
         // Prepare response
