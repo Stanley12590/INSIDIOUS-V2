@@ -8,7 +8,7 @@ module.exports = {
     name: "menu",
     execute: async (conn, msg, args, { from, sender, pushname }) => {
         try {
-            // Get user's original WhatsApp name
+            // Jina la mtumiaji
             let userName = pushname;
             if (!userName) {
                 try {
@@ -19,25 +19,46 @@ module.exports = {
                 }
             }
 
+            // Kategoria zote
             const cmdPath = path.join(__dirname, '../../commands');
             const categories = fs.readdirSync(cmdPath);
             
             const cards = [];
             const BUTTONS_PER_PAGE = 6;
 
-            // Prepare audio media (same audio for all cards)
-            const audioUrl = config.menuAudio || 'https://eliteprotech-url.zone.id/1771163123472g2ktsd.mp3'; // fallback
-            let audioMedia;
-            try {
-                audioMedia = await prepareWAMessageMedia(
-                    { audio: { url: audioUrl }, mimetype: 'audio/mpeg' },
-                    { upload: conn.waUploadToServer }
-                );
-            } catch (e) {
-                console.error('Failed to load audio:', e);
-                audioMedia = null;
+            // Picha ya menu
+            let imageMedia = null;
+            if (config.menuImage) {
+                try {
+                    const imageSource = config.menuImage.startsWith('http') 
+                        ? { url: config.menuImage } 
+                        : { url: config.menuImage };
+                    imageMedia = await prepareWAMessageMedia(
+                        { image: imageSource },
+                        { upload: conn.waUploadToServer || conn.upload }
+                    );
+                } catch (e) {
+                    console.error("Failed to load menu image:", e);
+                }
             }
 
+            // Sauti ya menu
+            let audioMedia = null;
+            if (config.menuAudio) {
+                try {
+                    const audioSource = config.menuAudio.startsWith('http')
+                        ? { url: config.menuAudio }
+                        : { url: config.menuAudio };
+                    audioMedia = await prepareWAMessageMedia(
+                        { audio: audioSource, mimetype: 'audio/mpeg' },
+                        { upload: conn.waUploadToServer || conn.upload }
+                    );
+                } catch (e) {
+                    console.error("Failed to load menu audio:", e);
+                }
+            }
+
+            // Tengeneza card kwa kila category
             for (const cat of categories) {
                 const catPath = path.join(cmdPath, cat);
                 const stat = fs.statSync(catPath);
@@ -49,13 +70,14 @@ module.exports = {
 
                 if (files.length === 0) continue;
 
-                // Split files into pages
+                // Gawanya kurasa
                 const pages = [];
                 for (let i = 0; i < files.length; i += BUTTONS_PER_PAGE) {
                     pages.push(files.slice(i, i + BUTTONS_PER_PAGE));
                 }
 
                 pages.forEach((pageFiles, pageIndex) => {
+                    // Vifungo vya commands
                     const buttons = pageFiles.map(cmd => ({
                         name: "quick_reply",
                         buttonParamsJson: JSON.stringify({
@@ -64,14 +86,14 @@ module.exports = {
                         })
                     }));
 
-                    // Navigation buttons
+                    // Vifungo vya navigation (Prev/Next)
                     if (pages.length > 1) {
                         if (pageIndex > 0) {
                             buttons.push({
                                 name: "quick_reply",
                                 buttonParamsJson: JSON.stringify({
                                     display_text: "◀️ Prev",
-                                    id: `${config.prefix}nav ${cat} ${pageIndex - 1}`
+                                    id: `${config.prefix}menu ${cat} ${pageIndex - 1}`
                                 })
                             });
                         }
@@ -80,13 +102,41 @@ module.exports = {
                                 name: "quick_reply",
                                 buttonParamsJson: JSON.stringify({
                                     display_text: "Next ▶️",
-                                    id: `${config.prefix}nav ${cat} ${pageIndex + 1}`
+                                    id: `${config.prefix}menu ${cat} ${pageIndex + 1}`
                                 })
                             });
                         }
                     }
 
-                    // Build card with audio header if available
+                    // Vifungo vya media (kama zipo)
+                    if (config.menuAudio) {
+                        buttons.push({
+                            name: "quick_reply",
+                            buttonParamsJson: JSON.stringify({
+                                display_text: "🎵 Play Music",
+                                id: `${config.prefix}playaudio ${cat}`
+                            })
+                        });
+                        buttons.push({
+                            name: "quick_reply",
+                            buttonParamsJson: JSON.stringify({
+                                display_text: "⏹️ Stop Music",
+                                id: `${config.prefix}stopaudio`
+                            })
+                        });
+                    }
+
+                    // Header ya card (picha au sauti)
+                    const cardHeader = {};
+                    if (audioMedia) {
+                        cardHeader.audioMessage = audioMedia.audioMessage;
+                    } else if (imageMedia) {
+                        cardHeader.imageMessage = imageMedia.imageMessage;
+                    } else {
+                        cardHeader.title = fancy(config.botName);
+                    }
+
+                    // Unda card
                     const card = {
                         body: { text: fancy(
                             `━━━━━━━━━━━━━━━━━━\n` +
@@ -94,16 +144,10 @@ module.exports = {
                             `━━━━━━━━━━━━━━━━━━\n\n` +
                             `👋 Hello, *${userName}*!\n` +
                             `Select a command below.\n\n` +
-                            `👑 Developer: ${config.developerName}`
+                            `👑 Developer: ${config.developerName || 'STANYTZ'}`
                         ) },
-                        footer: { text: fancy(config.footer) },
-                        header: audioMedia ? {
-                            hasMediaAttachment: true,
-                            audioMessage: audioMedia.audioMessage
-                        } : {
-                            title: fancy(config.botName),
-                            hasMediaAttachment: false
-                        },
+                        footer: { text: fancy(config.footer || 'INSIDIOUS BOT') },
+                        header: cardHeader,
                         nativeFlowMessage: {
                             buttons: buttons
                         }
@@ -112,7 +156,7 @@ module.exports = {
                 });
             }
 
-            // Main interactive message
+            // Ujumbe mkuu wa menu
             const interactiveMessage = {
                 body: { text: fancy(
                     `━━━━━━━━━━━━━━━━━━\n` +
@@ -123,25 +167,25 @@ module.exports = {
                 ) },
                 footer: { text: fancy("◀️ Slide left/right for categories & pages ▶️") },
                 header: {
-                    title: fancy(config.botName),
-                    hasMediaAttachment: false
+                    title: fancy(config.botName || 'INSIDIOUS'),
                 },
                 carouselMessage: {
                     cards: cards
                 }
             };
 
-            // Send as regular interactive message
+            // Tuma
             const messageContent = { interactiveMessage };
             const waMessage = generateWAMessageFromContent(from, messageContent, {
                 userJid: conn.user.id,
-                upload: conn.waUploadToServer
+                upload: conn.waUploadToServer || conn.upload
             });
             await conn.relayMessage(from, waMessage.message, { messageId: waMessage.key.id });
 
         } catch (e) {
             console.error("Menu error:", e);
-            // Fallback plain text menu
+            
+            // Fallback text menu
             let text = `╭─── • 🥀 • ───╮\n`;
             text += `   *INSIDIOUS MENU*  \n`;
             text += `╰─── • 🥀 • ───╯\n\n`;
