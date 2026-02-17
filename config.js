@@ -25,7 +25,6 @@ function getConfig(key, defaultValue) {
     return defaultValue;
 }
 
-// Helper to parse array from string (comma separated)
 function parseArray(value, defaultValue = []) {
     if (!value) return defaultValue;
     return value.split(',').map(v => v.trim()).filter(v => v);
@@ -92,7 +91,7 @@ module.exports = {
     maxTags: parseInt(getConfig('MAX_TAGS', "5")),
     inactiveDays: parseInt(getConfig('INACTIVE_DAYS', "7")),
     antiSpamLimit: parseInt(getConfig('ANTISPAM_LIMIT', "5")),
-    antiSpamInterval: parseInt(getConfig('ANTISPAM_INTERVAL', "10000")), // ms
+    antiSpamInterval: parseInt(getConfig('ANTISPAM_INTERVAL', "10000")),
     sleepingStart: getConfig('SLEEPING_START', "23:00"),
     sleepingEnd: getConfig('SLEEPING_END', "06:00"),
     maxCoOwners: parseInt(getConfig('MAX_CO_OWNERS', "2")),
@@ -140,33 +139,17 @@ module.exports = {
     adminNumbers: parseArray(getConfig('ADMIN_NUMBERS', '')),
 
     // ==================== NEW SETTINGS (MISSING ISSUES ADDED) ====================
-    // Limit for auto status replies per user per day
     autoStatusLimit: parseInt(getConfig('AUTO_STATUS_LIMIT', '10')),
-
-    // Scope for auto react: 'all', 'group', 'private'
     autoReactScope: getConfig('AUTO_REACT_SCOPE', 'all'),
-
-    // Scope for auto read: 'all', 'group', 'private'
     autoReadScope: getConfig('AUTO_READ_SCOPE', 'all'),
-
-    // Always online presence
     alwaysOnline: getConfig('ALWAYS_ONLINE', 'true') === 'true',
-
-    // Image for settings carousel (optional, falls back to menuImage)
     settingsImage: getConfig('SETTINGS_IMAGE', 'https://files.catbox.moe/irqrap.jpg'),
-
-    // Audio for settings carousel (optional)
     settingsAudio: getConfig('SETTINGS_AUDIO', ''),
-
-    // Category images (optional, for menu)
     categoryImages: {
         general: getConfig('CAT_IMAGE_GENERAL', 'https://files.catbox.moe/mfngio.png'),
         owner: getConfig('CAT_IMAGE_OWNER', 'https://files.catbox.moe/mfngio.png'),
         group: getConfig('CAT_IMAGE_GROUP', 'https://files.catbox.moe/mfngio.png'),
-        // add more as needed
     },
-
-    // Category audio (optional)
     categoryAudio: {
         general: getConfig('CAT_AUDIO_GENERAL', ''),
         owner: getConfig('CAT_AUDIO_OWNER', ''),
