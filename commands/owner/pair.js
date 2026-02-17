@@ -1,120 +1,64 @@
-const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, generateWAMessageFromContent } = require("@whiskeysockets/baileys");
-const pino = require("pino");
-const crypto = require("crypto");
-const fs = require('fs-extra');
-const path = require('path');
-const config = require('../../config');
-const { fancy } = require('../../lib/tools');
+const handler = require('../../handler');
+const axios = require('axios');
 
 module.exports = {
     name: "pair",
+    aliases: ["getcode", "pairbot"],
     ownerOnly: true,
-    description: "Generate an 8-digit pairing code",
-    usage: "[phone number]",
-    execute: async (conn, msg, args, { from, reply }) => {
-        let num = args[0]?.replace(/[^0-9]/g, '');
+    description: "Generate WhatsApp pairing code for a bot number (requires external API)",
+    usage: "<phone_number_with_country_code>",
+    
+    execute: async (conn, msg, args, { from, fancy, isOwner, reply }) => {
+        if (!isOwner) return;
 
-        if (!num || num.length < 10) {
-            return reply(fancy("🥀 Please provide a valid number: .pair 2557xxxxxxxx"));
+        const phoneNumber = args[0]?.replace(/[^0-9]/g, '');
+        if (!phoneNumber || phoneNumber.length < 10) {
+            return reply("❌ Please provide a valid phone number with country code.\nExample: .pair 255712345678");
         }
 
-        await reply(fancy("🥀 Generating pairing code..."));
-
-        const sessionId = crypto.randomBytes(8).toString('hex');
-        const sessionPath = path.join(__dirname, `../../temp_pair_${sessionId}`);
+        await reply("⏳ Generating pairing code... (this may take a few seconds)");
 
         try {
-            const { state } = await useMultiFileAuthState(sessionPath);
-            const tempConn = makeWASocket({
-                auth: {
-                    creds: state.creds,
-                    keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }))
-                },
-                printQRInTerminal: false,
-                logger: pino({ level: "silent" }),
-                browser: Browsers.macOS("Safari")
-            });
+            // Replace with your actual backend API URL
+            const API_URL = 'https://stany-min-bot.onrender.com/api/pair';
+            
+            const response = await axios.post(API_URL, {
+                phoneNumber: phoneNumber
+            }, { timeout: 60000 });
 
-            // Wait for connection to open
-            await new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => reject(new Error("Connection timeout")), 30000);
-                tempConn.ev.once('connection.update', ({ connection }) => {
-                    if (connection === 'open') {
-                        clearTimeout(timeout);
-                        resolve();
+            if (!response.data.success) {
+                throw new Error(response.data.error || 'Unknown error');
+            }
+
+            const { code, expiresIn, instructions } = response.data;
+
+            const pairText = `╭─── • 🥀 • ───╮\n` +
+                `   🤖 *PAIRING CODE*   \n` +
+                `╰─── • 🥀 • ───╯\n\n` +
+                `📱 *Number:* ${phoneNumber}\n` +
+                `🔑 *Code:* \`${code}\`\n` +
+                `⏱️ *Expires:* ${expiresIn} seconds\n\n` +
+                `*📋 HOW TO PAIR:*\n${instructions.map(i => `• ${i}`).join('\n')}\n\n` +
+                `_Click the button below to copy the code._`;
+
+            // Send with copy button
+            const buttonMessage = {
+                text: fancy(pairText),
+                buttons: [
+                    {
+                        buttonId: `copy_${code}`,
+                        buttonText: { displayText: '📋 COPY CODE' },
+                        type: 1
                     }
-                });
-            });
-
-            // Small extra delay to ensure socket is ready
-            await new Promise(r => setTimeout(r, 2000));
-
-            const code = await tempConn.requestPairingCode(num);
-            const cleanCode = code.replace(/-/g, ''); // Remove dashes for cleaner ID
-
-            // Build interactive message with copy button and FULL INSTRUCTIONS
-            const interactiveMsg = {
-                body: {
-                    text: fancy(
-                        `╭── • 🥀 • ──╮\n` +
-                        `   ᴘᴀɪʀɪɴɢ ᴄᴏᴅᴇ\n` +
-                        `╰── • 🥀 • ──╯\n\n` +
-                        `📱 Number: *${num}*\n` +
-                        `🔑 Code: *${code}*\n\n` +
-                        `━━━━━━━━━━━━━━━━━━\n` +
-                        `📌 *HOW TO LINK:*\n` +
-                        `1️⃣ Open WhatsApp on your phone\n` +
-                        `2️⃣ Go to *Settings > Linked Devices*\n` +
-                        `3️⃣ Tap *"Link a Device"*\n` +
-                        `4️⃣ Enter this 8-digit code:\n` +
-                        `   *${code}*\n` +
-                        `5️⃣ Your device will be linked!\n` +
-                        `━━━━━━━━━━━━━━━━━━\n\n` +
-                        `⬇️ Tap the button below to copy the code.`
-                    )
-                },
-                footer: { text: fancy(config.footer) },
-                header: {
-                    title: fancy(config.botName),
-                    hasMediaAttachment: false
-                },
-                nativeFlowMessage: {
-                    buttons: [{
-                        name: "quick_reply",
-                        buttonParamsJson: JSON.stringify({
-                            display_text: "📋 Copy Code",
-                            id: `${config.prefix}copycode ${cleanCode}` // Valid command
-                        })
-                    }]
-                }
+                ],
+                headerType: 1
             };
 
-            const messageContent = { interactiveMessage: interactiveMsg };
-            const waMessage = generateWAMessageFromContent(from, messageContent, {
-                userJid: conn.user.id,
-                upload: conn.waUploadToServer
-            });
-
-            await conn.relayMessage(from, waMessage.message, { messageId: waMessage.key.id });
-
-            // Register the number as co‑owner (if handler has pairNumber)
-            try {
-                const handler = require('../../handler');
-                if (handler && handler.pairNumber) {
-                    await handler.pairNumber(num);
-                }
-            } catch {}
-
-            // Clean up temporary connection and session folder after 15 seconds
-            setTimeout(async () => {
-                tempConn.end();
-                await fs.rm(sessionPath, { recursive: true, force: true }).catch(() => {});
-            }, 15000);
+            await conn.sendMessage(from, buttonMessage, { quoted: msg });
 
         } catch (error) {
-            console.error("Pairing error:", error);
-            reply("🥀 Failed to generate pairing code.");
-            await fs.rm(sessionPath, { recursive: true, force: true }).catch(() => {});
+            console.error('Pairing error:', error);
+            reply(`❌ Failed to generate code: ${error.message}\n\nMake sure your backend API is running.`);
         }
     }
 };
