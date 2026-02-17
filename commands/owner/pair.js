@@ -1,12 +1,14 @@
-const handler = require('../../handler');
-const axios = require('axios');
+const { makeWASocket, useMultiFileAuthState, Browsers, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const pino = require('pino');
+const path = require('path');
+const fs = require('fs-extra');
 
 module.exports = {
     name: "pair",
     aliases: ["getcode", "pairbot"],
     ownerOnly: true,
-    description: "Generate WhatsApp pairing code for a bot number (requires external API)",
-    usage: "<phone_number_with_country_code>",
+    description: "Generate WhatsApp pairing code directly (no web)",
+    usage: ".pair <phone_number_with_country_code>",
     
     execute: async (conn, msg, args, { from, fancy, isOwner, reply }) => {
         if (!isOwner) return;
@@ -16,49 +18,103 @@ module.exports = {
             return reply("❌ Please provide a valid phone number with country code.\nExample: .pair 255712345678");
         }
 
-        await reply("⏳ Generating pairing code... (this may take a few seconds)");
+        // Notify user that we're starting
+        await reply("⏳ Generating pairing code... (please wait a few seconds)");
 
         try {
-            // Replace with your actual backend API URL
-            const API_URL = 'https://stany-min-bot.onrender.com/api/pair';
-            
-            const response = await axios.post(API_URL, {
-                phoneNumber: phoneNumber
-            }, { timeout: 60000 });
+            // Use a temporary folder for this session (so it doesn't interfere with main bot)
+            const tempAuthDir = path.join(__dirname, '../../temp_pair_session');
+            await fs.ensureDir(tempAuthDir);
 
-            if (!response.data.success) {
-                throw new Error(response.data.error || 'Unknown error');
-            }
+            const { state, saveCreds } = await useMultiFileAuthState(tempAuthDir);
+            const { version } = await fetchLatestBaileysVersion();
 
-            const { code, expiresIn, instructions } = response.data;
+            // Create a new socket just for pairing
+            const pairingConn = makeWASocket({
+                version,
+                auth: state,
+                logger: pino({ level: 'silent' }),
+                browser: Browsers.macOS('Safari'),
+                syncFullHistory: false,
+                connectTimeoutMs: 60000,
+                generateHighQualityLink: true,
+                getMessage: async () => null
+            });
 
-            const pairText = `╭─── • 🥀 • ───╮\n` +
-                `   🤖 *PAIRING CODE*   \n` +
-                `╰─── • 🥀 • ───╯\n\n` +
-                `📱 *Number:* ${phoneNumber}\n` +
-                `🔑 *Code:* \`${code}\`\n` +
-                `⏱️ *Expires:* ${expiresIn} seconds\n\n` +
-                `*📋 HOW TO PAIR:*\n${instructions.map(i => `• ${i}`).join('\n')}\n\n` +
-                `_Click the button below to copy the code._`;
+            // Wait for the pairing code
+            let pairingCode = null;
+            let error = null;
 
-            // Send with copy button
-            const buttonMessage = {
-                text: fancy(pairText),
-                buttons: [
-                    {
-                        buttonId: `copy_${code}`,
-                        buttonText: { displayText: '📋 COPY CODE' },
-                        type: 1
+            // Use a promise to wait for the code
+            const codePromise = new Promise((resolve, reject) => {
+                // Listen for connection updates
+                pairingConn.ev.on('connection.update', async (update) => {
+                    const { connection, lastDisconnect, qr } = update;
+                    if (qr) {
+                        reject(new Error('QR code received, but we need pairing code'));
                     }
-                ],
-                headerType: 1
-            };
+                    if (connection === 'close') {
+                        reject(new Error('Connection closed before receiving code'));
+                    }
+                });
 
-            await conn.sendMessage(from, buttonMessage, { quoted: msg });
+                // Request the pairing code after a short delay
+                setTimeout(async () => {
+                    try {
+                        const code = await pairingConn.requestPairingCode(phoneNumber);
+                        resolve(code);
+                    } catch (err) {
+                        reject(err);
+                    }
+                }, 2000); // Wait 2 seconds for the socket to initialize
+            });
 
-        } catch (error) {
-            console.error('Pairing error:', error);
-            reply(`❌ Failed to generate code: ${error.message}\n\nMake sure your backend API is running.`);
+            // Set a timeout of 30 seconds
+            pairingCode = await Promise.race([
+                codePromise,
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
+            ]);
+
+            // Close the temporary socket and clean up the folder
+            pairingConn.ws.close();
+            await fs.remove(tempAuthDir);
+
+            // Send the code to the user
+            const message = `
+╭─── • 🥀 • ───╮
+   *PAIRING CODE*
+╰─── • 🥀 • ───╯
+
+📱 *Number:* ${phoneNumber}
+🔑 *Code:* \`${pairingCode}\`
+⏱️ *Expires in:* 60 seconds
+
+📋 *HOW TO PAIR:*
+1. Open WhatsApp on your phone
+2. Go to Settings → Linked Devices
+3. Tap "Link a Device"
+4. Select "Link with Phone Number"
+5. Enter this 8-digit code
+6. Wait for connection
+
+_Code expires after 60 seconds._
+`;
+
+            await conn.sendMessage(from, {
+                text: fancy(message),
+                contextInfo: {
+                    isForwarded: true,
+                    forwardingScore: 999,
+                    forwardedNewsletterMessageInfo: {
+                        newsletterJid: "120363404317544295@newsletter",
+                        newsletterName: "INSIDIOUS BOT"
+                    }
+                }
+            }, { quoted: msg });
+
+        } catch (err) {
+            console.error("Pairing error:", err);
+            reply(`❌ Failed to get code: ${err.message}`);
         }
     }
 };
