@@ -41,7 +41,7 @@ const GROUP_SETTINGS_FILE = path.join(__dirname, '.groupsettings.json');
 const PAIR_FILE = path.join(__dirname, '.paired.json');
 
 let globalSettings = { ...DEFAULT_SETTINGS };
-let groupSettings = new Map();
+let groupSettings = new Map(); // KEY: groupJid, VALUE: object with settings
 let pairedNumbers = new Set();
 let botSecretId = null;
 
@@ -62,9 +62,12 @@ async function loadGlobalSettings() {
     } catch (e) { console.error('Error loading global settings:', e); }
     return globalSettings;
 }
+
 async function saveGlobalSettings() {
-    try { await fs.writeJson(SETTINGS_FILE, globalSettings, { spaces: 2 }); } catch (e) { console.error('Error saving global settings:', e); }
+    try { await fs.writeJson(SETTINGS_FILE, globalSettings, { spaces: 2 }); } 
+    catch (e) { console.error('Error saving global settings:', e); }
 }
+
 async function loadGroupSettings() {
     try {
         if (await fs.pathExists(GROUP_SETTINGS_FILE)) {
@@ -73,23 +76,27 @@ async function loadGroupSettings() {
         }
     } catch (e) { console.error('Error loading group settings:', e); }
 }
+
 async function saveGroupSettings() {
     try {
         const obj = Object.fromEntries(groupSettings);
         await fs.writeJson(GROUP_SETTINGS_FILE, obj, { spaces: 2 });
     } catch (e) { console.error('Error saving group settings:', e); }
 }
+
 function getGroupSetting(groupJid, key) {
     if (!groupJid || groupJid === 'global') return globalSettings[key];
     const gs = groupSettings.get(groupJid) || {};
     return gs[key] !== undefined ? gs[key] : globalSettings[key];
 }
+
 async function setGroupSetting(groupJid, key, value) {
     const gs = groupSettings.get(groupJid) || {};
     gs[key] = value;
     groupSettings.set(groupJid, gs);
     await saveGroupSettings();
 }
+
 async function refreshConfig() {
     await loadGlobalSettings();
     await loadGroupSettings();
@@ -102,6 +109,7 @@ function generateBotId() {
     for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
     return id;
 }
+
 async function loadPairedNumbers() {
     try {
         if (await fs.pathExists(PAIR_FILE)) {
@@ -120,6 +128,7 @@ async function loadPairedNumbers() {
         config.ownerNumber.forEach(num => num && pairedNumbers.add(num.replace(/[^0-9]/g, '')));
     }
 }
+
 async function savePairedNumbers() {
     const data = {
         botId: botSecretId,
@@ -127,29 +136,41 @@ async function savePairedNumbers() {
     };
     await fs.writeJson(PAIR_FILE, data, { spaces: 2 });
 }
+
 function isDeployer(number) {
     const clean = number.replace(/[^0-9]/g, '');
     return config.ownerNumber?.includes(clean) || false;
 }
+
 function isCoOwner(number) {
     const clean = number.replace(/[^0-9]/g, '');
     return pairedNumbers.has(clean) && !config.ownerNumber?.includes(clean);
 }
 
+function canPairNumber(number) {
+    const clean = number.replace(/[^0-9]/g, '');
+    if (config.ownerNumber?.includes(clean)) return false;
+    const nonOwnerPaired = Array.from(pairedNumbers).filter(n => !config.ownerNumber?.includes(n));
+    return nonOwnerPaired.length < globalSettings.maxCoOwners && !pairedNumbers.has(clean);
+}
+
 // ==================== HELPER FUNCTIONS ====================
 function getUsername(jid) { return jid?.split('@')[0] || 'Unknown'; }
+
 async function getContactName(conn, jid) {
     try {
         const contact = await conn.getContact(jid);
         return contact?.name || contact?.pushname || getUsername(jid);
     } catch { return getUsername(jid); }
 }
+
 async function getGroupName(conn, groupJid) {
     try {
         const meta = await conn.groupMetadata(groupJid);
         return meta.subject || 'Group';
     } catch { return 'Group'; }
 }
+
 async function isBotAdmin(conn, groupJid) {
     try {
         if (!conn.user?.id) return false;
@@ -157,6 +178,7 @@ async function isBotAdmin(conn, groupJid) {
         return meta.participants.some(p => p.id === conn.user.id && (p.admin === 'admin' || p.admin === 'superadmin'));
     } catch { return false; }
 }
+
 async function isParticipantAdmin(conn, groupJid, participantJid) {
     try {
         const meta = await conn.groupMetadata(groupJid);
@@ -164,18 +186,19 @@ async function isParticipantAdmin(conn, groupJid, participantJid) {
         return participant ? (participant.admin === 'admin' || participant.admin === 'superadmin') : false;
     } catch { return false; }
 }
+
 function enhanceMessage(conn, msg) {
     if (!msg) return msg;
     if (!msg.reply) {
         msg.reply = async (text, options = {}) => {
             try {
-                // Use formatMessage for replies as well
                 return await conn.sendMessage(msg.key.remoteJid, { text: formatMessage(text), ...options }, { quoted: msg });
             } catch (e) { return null; }
         };
     }
     return msg;
 }
+
 async function isUserInRequiredGroup(conn, userJid) {
     if (!globalSettings.requiredGroupJid) return true;
     try {
@@ -234,6 +257,7 @@ async function handleAntiLink(conn, msg, body, from, sender) {
     await applyAction(conn, from, sender, 'warn', 'Sending links', 1, customMsg);
     return true;
 }
+
 async function handleAntiPorn(conn, msg, body, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antiporn')) return false;
     const keywords = getGroupSetting(from, 'pornKeywords');
@@ -245,6 +269,7 @@ async function handleAntiPorn(conn, msg, body, from, sender) {
     }
     return false;
 }
+
 async function handleAntiScam(conn, msg, body, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antiscam')) return false;
     const keywords = getGroupSetting(from, 'scamKeywords');
@@ -262,6 +287,7 @@ async function handleAntiScam(conn, msg, body, from, sender) {
     }
     return false;
 }
+
 async function handleAntiMedia(conn, msg, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antimedia')) return false;
     const blocked = getGroupSetting(from, 'blockedMediaTypes') || [];
@@ -289,6 +315,7 @@ async function handleAntiMedia(conn, msg, from, sender) {
     }
     return false;
 }
+
 async function handleAntiTag(conn, msg, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antitag')) return false;
     const mentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
@@ -298,6 +325,7 @@ async function handleAntiTag(conn, msg, from, sender) {
     await applyAction(conn, from, sender, 'warn', 'Excessive tagging', 1, customMsg);
     return true;
 }
+
 async function handleViewOnce(conn, msg) {
     if (!getGroupSetting('global', 'antiviewonce')) return false;
     if (!msg.message?.viewOnceMessageV2 && !msg.message?.viewOnceMessage) return false;
@@ -312,6 +340,7 @@ async function handleViewOnce(conn, msg) {
     }
     return true;
 }
+
 async function handleAntiDelete(conn, msg) {
     if (!getGroupSetting('global', 'antidelete')) return false;
     if (!msg.message?.protocolMessage || msg.message.protocolMessage.type !== 0) return false;
@@ -327,6 +356,7 @@ async function handleAntiDelete(conn, msg) {
     messageStore.delete(deletedMsgId);
     return true;
 }
+
 async function handleAntiBugs(conn, msg, from, sender) {
     if (!getGroupSetting(from, 'antibugs')) return false;
     const body = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || '';
@@ -343,6 +373,7 @@ async function handleAntiBugs(conn, msg, from, sender) {
     }
     return false;
 }
+
 async function handleAntiSpam(conn, msg, from, sender) {
     if (!getGroupSetting(from, 'antispam')) return false;
     const now = Date.now();
@@ -364,6 +395,7 @@ async function handleAntiSpam(conn, msg, from, sender) {
     }
     return false;
 }
+
 async function handleAntiCall(conn, call) {
     if (!globalSettings.anticall) return;
     await conn.rejectCall(call.id, call.from).catch(() => {});
@@ -553,7 +585,6 @@ async function handleWelcome(conn, participant, groupJid, action = 'add') {
         });
         await conn.relayMessage(groupJid, waMsg.message, { messageId: waMsg.key.id });
         
-        // Forward to owner
         if (action === 'add') {
             for (const num of config.ownerNumber || []) {
                 const ownerJid = num + '@s.whatsapp.net';
@@ -723,7 +754,7 @@ async function handleCommand(conn, msg, body, from, sender, isOwner, isDeployerU
                         isOwner,
                         isDeployer: isDeployerUser,
                         isCoOwner: isCoOwnerUser,
-                        reply: msg.reply, // msg.reply already uses formatMessage
+                        reply: msg.reply,
                         botId: botSecretId,
                         isBotAdmin: (jid) => isBotAdmin(conn, jid),
                         isParticipantAdmin: (jid, participant) => isParticipantAdmin(conn, jid, participant),
@@ -765,6 +796,7 @@ module.exports = async (conn, m) => {
         const sender = msg.key.participant || msg.key.remoteJid;
         const senderNumber = sender.split('@')[0];
 
+        // ========== BUTTON CLICK HANDLING (FIXED 100%) ==========
         const type = Object.keys(msg.message)[0];
         let body = "";
 
@@ -772,13 +804,15 @@ module.exports = async (conn, m) => {
             try {
                 const interactiveMsg = msg.message.interactiveResponseMessage;
                 const nativeFlow = interactiveMsg?.nativeFlowResponseMessage;
+                
                 if (nativeFlow && nativeFlow.paramsJson) {
                     const parsed = JSON.parse(nativeFlow.paramsJson);
                     body = parsed.id || "";
+                    console.log('🔘 Button clicked:', body);
                 } else if (interactiveMsg?.body?.text) {
                     body = interactiveMsg.body.text;
+                    console.log('🔘 Button clicked (fallback):', body);
                 }
-                if (body) console.log('🔘 Button clicked:', body);
             } catch (e) {
                 console.error('Button parsing error:', e);
                 body = "";
@@ -835,6 +869,7 @@ module.exports = async (conn, m) => {
         await handleViewOnce(conn, msg);
         await handleAntiDelete(conn, msg);
 
+        // ========== COMMANDS (INCLUDING BUTTON COMMANDS) ==========
         if (body) {
             const handled = await handleCommand(conn, msg, body, from, sender, isOwner, isDeployerUser, isCoOwnerUser);
             if (handled) return;
@@ -861,6 +896,7 @@ module.exports = async (conn, m) => {
     }
 };
 
+// ==================== GROUP UPDATE HANDLER ====================
 module.exports.handleGroupUpdate = async (conn, update) => {
     await loadGlobalSettings();
     await loadGroupSettings();
@@ -883,11 +919,13 @@ module.exports.handleGroupUpdate = async (conn, update) => {
     }
 };
 
+// ==================== CALL HANDLER ====================
 module.exports.handleCall = async (conn, call) => {
     await loadGlobalSettings();
     await handleAntiCall(conn, call);
 };
 
+// ==================== INITIALIZATION ====================
 module.exports.init = async (conn) => {
     console.log(fancy('[SYSTEM] Initializing INSIDIOUS: THE LAST KEY...'));
     await loadGlobalSettings();
@@ -933,6 +971,7 @@ module.exports.init = async (conn) => {
     console.log(fancy('[SYSTEM] ✅ All systems ready'));
 };
 
+// ==================== EXPORTS ====================
 module.exports.pairNumber = async (number) => {
     const clean = number.replace(/[^0-9]/g, '');
     if (!canPairNumber(clean)) return false;
@@ -940,6 +979,7 @@ module.exports.pairNumber = async (number) => {
     await savePairedNumbers();
     return true;
 };
+
 module.exports.unpairNumber = async (number) => {
     const clean = number.replace(/[^0-9]/g, '');
     if (config.ownerNumber?.includes(clean)) return false;
@@ -947,16 +987,12 @@ module.exports.unpairNumber = async (number) => {
     if (deleted) await savePairedNumbers();
     return deleted;
 };
+
 module.exports.getPairedNumbers = () => Array.from(pairedNumbers);
 module.exports.getBotId = () => botSecretId;
 module.exports.isDeployer = isDeployer;
 module.exports.isCoOwner = isCoOwner;
-module.exports.canPairNumber = (number) => {
-    const clean = number.replace(/[^0-9]/g, '');
-    if (config.ownerNumber?.includes(clean)) return false;
-    const nonOwnerPaired = Array.from(pairedNumbers).filter(n => !config.ownerNumber?.includes(n));
-    return nonOwnerPaired.length < globalSettings.maxCoOwners && !pairedNumbers.has(clean);
-};
+module.exports.canPairNumber = canPairNumber;
 module.exports.loadGlobalSettings = loadGlobalSettings;
 module.exports.saveGlobalSettings = saveGlobalSettings;
 module.exports.getGroupSetting = getGroupSetting;
