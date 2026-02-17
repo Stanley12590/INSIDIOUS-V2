@@ -4,7 +4,7 @@ module.exports = {
     name: "settings",
     aliases: ["setting", "config"],
     ownerOnly: true,
-    description: "View and manage all bot settings (text version)",
+    description: "Manage bot settings (group/private/all)",
     
     execute: async (conn, msg, args, { from, fancy, isOwner, reply }) => {
         if (!isOwner) return;
@@ -12,52 +12,48 @@ module.exports = {
         const settings = await handler.loadGlobalSettings();
         const prefix = settings.prefix || '.';
 
-        // ========== NO ARGS – SHOW ALL SETTINGS ==========
+        // ========== SHOW ALL SETTINGS ==========
         if (args.length === 0) {
             let text = `╭─── • 🥀 • ───╮\n`;
             text += `   *BOT SETTINGS*   \n`;
             text += `╰─── • 🥀 • ───╯\n\n`;
 
-            // ANTI FEATURES
-            text += `🔧 *ANTI FEATURES*\n`;
+            // ANTI FEATURES (zote ni group only – haziwezi kuwa private)
+            text += `🔧 *ANTI FEATURES* (group only)\n`;
             text += `┌─────────────────────\n`;
-            text += `│ antilink       : ${settings.antilink ? '✅' : '❌'}\n`;
-            text += `│ antiporn       : ${settings.antiporn ? '✅' : '❌'}\n`;
-            text += `│ antiscam       : ${settings.antiscam ? '✅' : '❌'}\n`;
-            text += `│ antimedia      : ${settings.antimedia ? '✅' : '❌'}\n`;
-            text += `│ antitag        : ${settings.antitag ? '✅' : '❌'}\n`;
-            text += `│ antiviewonce   : ${settings.antiviewonce ? '✅' : '❌'}\n`;
-            text += `│ antidelete     : ${settings.antidelete ? '✅' : '❌'}\n`;
-            text += `│ sleepingmode   : ${settings.sleepingmode ? '✅' : '❌'}\n`;
-            text += `│ antibugs       : ${settings.antibugs ? '✅' : '❌'}\n`;
-            text += `│ antispam       : ${settings.antispam ? '✅' : '❌'}\n`;
-            text += `│ anticall       : ${settings.anticall ? '✅' : '❌'}\n`;
+            text += `│ antilink    : ${settings.antilink ? '✅' : '❌'}\n`;
+            text += `│ antiporn    : ${settings.antiporn ? '✅' : '❌'}\n`;
+            text += `│ antiscam    : ${settings.antiscam ? '✅' : '❌'}\n`;
+            text += `│ antimedia   : ${settings.antimedia ? '✅' : '❌'}\n`;
+            text += `│ antitag     : ${settings.antitag ? '✅' : '❌'}\n`;
+            text += `│ antibugs    : ${settings.antibugs ? '✅' : '❌'}\n`;
+            text += `│ antispam    : ${settings.antispam ? '✅' : '❌'}\n`;
+            text += `│ sleepingmode: ${settings.sleepingmode ? '✅' : '❌'}\n`;
             text += `└─────────────────────\n\n`;
 
-            // AUTO FEATURES
+            // AUTO FEATURES (zinaweza kuwa group/private/all)
             text += `⚡ *AUTO FEATURES*\n`;
             text += `┌─────────────────────\n`;
-            text += `│ autoRead       : ${settings.autoRead ? '✅' : '❌'} (scope: ${settings.autoReadScope})\n`;
-            text += `│ autoReact      : ${settings.autoReact ? '✅' : '❌'} (scope: ${settings.autoReactScope})\n`;
-            text += `│ autoTyping     : ${settings.autoTyping ? '✅' : '❌'}\n`;
-            text += `│ autoRecording  : ${settings.autoRecording ? '✅' : '❌'}\n`;
-            text += `│ autoBio        : ${settings.autoBio ? '✅' : '❌'}\n`;
-            text += `│ autostatus     : ${settings.autostatus ? '✅' : '❌'} (limit: ${settings.autoStatusLimit}/day)\n`;
-            text += `│ downloadStatus : ${settings.downloadStatus ? '✅' : '❌'}\n`;
+            text += `│ autoRead    : ${settings.autoReadScope || 'all'} (${settings.autoRead ? '✅' : '❌'})\n`;
+            text += `│ autoReact   : ${settings.autoReactScope || 'all'} (${settings.autoReact ? '✅' : '❌'})\n`;
+            text += `│ autoTyping  : ${settings.autoTyping ? '✅' : '❌'}\n`;
+            text += `│ autoRecording: ${settings.autoRecording ? '✅' : '❌'}\n`;
+            text += `│ autoBio     : ${settings.autoBio ? '✅' : '❌'}\n`;
+            text += `│ autostatus  : ${settings.autostatus ? '✅' : '❌'} (limit: ${settings.autoStatusLimit})\n`;
+            text += `└─────────────────────\n\n`;
+
+            // CHATBOT (inaweza kuwa group/private/all)
+            text += `🤖 *CHATBOT*\n`;
+            text += `┌─────────────────────\n`;
+            text += `│ chatbot     : ${settings.chatbotScope || 'all'} (${settings.chatbot ? '✅' : '❌'})\n`;
             text += `└─────────────────────\n\n`;
 
             // GROUP MANAGEMENT
             text += `👥 *GROUP MANAGEMENT*\n`;
             text += `┌─────────────────────\n`;
-            text += `│ welcomeGoodbye : ${settings.welcomeGoodbye ? '✅' : '❌'}\n`;
-            text += `│ activemembers  : ${settings.activemembers ? '✅' : '❌'}\n`;
+            text += `│ welcomeGoodbye: ${settings.welcomeGoodbye ? '✅' : '❌'}\n`;
+            text += `│ activemembers : ${settings.activemembers ? '✅' : '❌'}\n`;
             text += `│ autoblockCountry: ${settings.autoblockCountry ? '✅' : '❌'}\n`;
-            text += `└─────────────────────\n\n`;
-
-            // AI
-            text += `🤖 *AI FEATURES*\n`;
-            text += `┌─────────────────────\n`;
-            text += `│ chatbot        : ${settings.chatbot ? '✅' : '❌'}\n`;
             text += `└─────────────────────\n\n`;
 
             // LIMITS
@@ -71,51 +67,44 @@ module.exports = {
             text += `│ sleepingStart  : ${settings.sleepingStart}\n`;
             text += `│ sleepingEnd    : ${settings.sleepingEnd}\n`;
             text += `│ maxCoOwners    : ${settings.maxCoOwners}\n`;
+            text += `│ autoStatusLimit: ${settings.autoStatusLimit}\n`;
             text += `└─────────────────────\n\n`;
 
             // MODE & PREFIX
             text += `🔐 *MODE & PREFIX*\n`;
             text += `┌─────────────────────\n`;
-            text += `│ mode           : ${settings.mode}\n`;
-            text += `│ prefix         : ${settings.prefix}\n`;
-            text += `│ alwaysOnline   : ${settings.alwaysOnline ? '✅' : '❌'}\n`;
+            text += `│ mode         : ${settings.mode}\n`;
+            text += `│ prefix       : ${settings.prefix}\n`;
+            text += `│ alwaysOnline : ${settings.alwaysOnline ? '✅' : '❌'}\n`;
             text += `└─────────────────────\n\n`;
 
-            // ARRAYS (just counts)
+            // ARRAYS
             text += `📋 *ARRAY SETTINGS*\n`;
             text += `┌─────────────────────\n`;
             text += `│ scamKeywords   : ${settings.scamKeywords?.length || 0} items\n`;
             text += `│ pornKeywords   : ${settings.pornKeywords?.length || 0} items\n`;
-            text += `│ blockedMediaTypes: ${settings.blockedMediaTypes?.length || 0} items\n`;
-            text += `│ autoReactEmojis: ${settings.autoReactEmojis?.length || 0} items\n`;
+            text += `│ blockedMedia   : ${settings.blockedMediaTypes?.length || 0} items\n`;
+            text += `│ reactEmojis    : ${settings.autoReactEmojis?.length || 0} items\n`;
             text += `│ blockedCountries: ${settings.blockedCountries?.length || 0} items\n`;
             text += `└─────────────────────\n\n`;
 
             text += `💡 *USAGE*\n`;
-            text += `${prefix}settings toggle <feature>          # toggle boolean\n`;
-            text += `${prefix}settings set <feature> <value>     # set number/string\n`;
-            text += `${prefix}settings list <array>              # list array items\n`;
-            text += `${prefix}settings add <array> <item>        # add to array\n`;
-            text += `${prefix}settings remove <array> <item>     # remove from array\n\n`;
+            text += `• ${prefix}settings anti <feature> on/off\n`;
+            text += `• ${prefix}settings auto <feature> <group/private/all> [on/off]\n`;
+            text += `• ${prefix}settings set <feature> <value>\n`;
+            text += `• ${prefix}settings list <array>\n`;
+            text += `• ${prefix}settings add <array> <item>\n`;
+            text += `• ${prefix}settings remove <array> <item>\n\n`;
             text += `_Examples:_\n`;
-            text += `• ${prefix}settings toggle antilink\n`;
-            text += `• ${prefix}settings set warnLimit 5\n`;
-            text += `• ${prefix}settings add scam win\n`;
-            text += `• ${prefix}settings list scam\n`;
+            text += `${prefix}settings anti antilink on\n`;
+            text += `${prefix}settings auto autoRead all on\n`;
+            text += `${prefix}settings set warnLimit 5\n`;
 
-            // Send image with settings as caption (forwarded)
+            // Send with image
             await conn.sendMessage(from, {
                 image: { url: settings.botImage || 'https://files.catbox.moe/mfngio.png' },
                 caption: fancy(text),
-                contextInfo: {
-                    isForwarded: true,
-                    forwardingScore: 999,
-                    forwardedNewsletterMessageInfo: {
-                        newsletterJid: settings.newsletterJid || '120363404317544295@newsletter',
-                        newsletterName: settings.botName,
-                        serverMessageId: 100
-                    }
-                }
+                contextInfo: { isForwarded: true }
             }, { quoted: msg });
             return;
         }
@@ -123,17 +112,64 @@ module.exports = {
         // ========== SUBCOMMANDS ==========
         const sub = args[0].toLowerCase();
 
-        // ----- TOGGLE -----
-        if (sub === 'toggle') {
+        // ----- ANTI FEATURES (group only, simple on/off) -----
+        if (sub === 'anti') {
             const feature = args[1];
-            if (!feature) return reply("❌ Specify feature to toggle.");
-            if (!(feature in settings) || typeof settings[feature] !== 'boolean') {
-                return reply("❌ Invalid boolean feature.");
+            const action = args[2]?.toLowerCase();
+
+            const antiFeatures = ['antilink', 'antiporn', 'antiscam', 'antimedia', 'antitag', 'antibugs', 'antispam', 'sleepingmode'];
+            if (!antiFeatures.includes(feature)) {
+                return reply(`❌ Invalid anti feature. Valid: ${antiFeatures.join(', ')}`);
             }
-            settings[feature] = !settings[feature];
+            if (!action || !['on', 'off'].includes(action)) {
+                return reply("❌ Specify on or off.");
+            }
+
+            settings[feature] = action === 'on';
             await handler.saveGlobalSettings(settings);
             await handler.refreshConfig();
-            return reply(`✅ ${feature} is now ${settings[feature] ? 'ON' : 'OFF'}`);
+            return reply(`✅ ${feature} is now ${action.toUpperCase()}`);
+        }
+
+        // ----- AUTO FEATURES (with scope) -----
+        if (sub === 'auto') {
+            const feature = args[1];
+            const scope = args[2]?.toLowerCase();
+            const action = args[3]?.toLowerCase();
+
+            const autoFeatures = ['autoRead', 'autoReact', 'autoTyping', 'autoRecording', 'autoBio', 'autostatus', 'chatbot'];
+            if (!autoFeatures.includes(feature)) {
+                return reply(`❌ Invalid auto feature. Valid: ${autoFeatures.join(', ')}`);
+            }
+
+            // For features that don't need scope (like autoTyping, autoBio)
+            const noScopeFeatures = ['autoTyping', 'autoRecording', 'autoBio'];
+            if (noScopeFeatures.includes(feature)) {
+                if (!action || !['on', 'off'].includes(action)) {
+                    return reply("❌ Specify on or off.");
+                }
+                settings[feature] = action === 'on';
+                await handler.saveGlobalSettings(settings);
+                await handler.refreshConfig();
+                return reply(`✅ ${feature} is now ${action.toUpperCase()}`);
+            }
+
+            // Features with scope
+            if (!scope || !['group', 'private', 'all'].includes(scope)) {
+                return reply("❌ Specify scope: group/private/all");
+            }
+            if (!action || !['on', 'off'].includes(action)) {
+                return reply("❌ Specify on or off.");
+            }
+
+            // Set both the boolean and the scope
+            settings[feature] = action === 'on';
+            const scopeKey = feature === 'chatbot' ? 'chatbotScope' : feature + 'Scope';
+            settings[scopeKey] = scope;
+
+            await handler.saveGlobalSettings(settings);
+            await handler.refreshConfig();
+            return reply(`✅ ${feature} is now ${action.toUpperCase()} (scope: ${scope})`);
         }
 
         // ----- SET (number/string) -----
@@ -150,7 +186,7 @@ module.exports = {
             } else if (typeof settings[feature] === 'string') {
                 settings[feature] = value;
             } else {
-                return reply("❌ Cannot set this feature. Use toggle/add/remove.");
+                return reply("❌ Cannot set this feature. Use anti/auto/add/remove.");
             }
             await handler.saveGlobalSettings(settings);
             await handler.refreshConfig();
@@ -231,7 +267,6 @@ module.exports = {
             return reply(`✅ Removed from ${key}: ${item}`);
         }
 
-        // ----- UNKNOWN SUBCOMMAND -----
         reply("❌ Unknown subcommand. Use .settings with no arguments for help.");
     }
 };
