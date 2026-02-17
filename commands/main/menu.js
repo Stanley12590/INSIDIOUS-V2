@@ -1,8 +1,8 @@
 const fs = require('fs-extra');
 const path = require('path');
 const { generateWAMessageFromContent, prepareWAMessageMedia } = require('@whiskeysockets/baileys');
-const { fancy, runtime } = require('../../lib/tools');
-const handler = require('../../handler');
+const { fancy, runtime } = require('../lib/tools');
+const handler = require('../handler');
 
 module.exports = {
     name: "menu",
@@ -12,7 +12,7 @@ module.exports = {
             const settings = await handler.loadGlobalSettings();
             const prefix = settings.prefix || '.';
 
-            const cmdPath = path.join(__dirname, '../../commands');
+            const cmdPath = path.join(__dirname, '../commands');
             const categories = fs.readdirSync(cmdPath).filter(c => fs.statSync(path.join(cmdPath, c)).isDirectory());
             const cards = [];
 
@@ -53,7 +53,10 @@ module.exports = {
                     const cardHeader = imageMedia ? { imageMessage: imageMedia.imageMessage } : { title: fancy(cat.toUpperCase()) };
                     const card = {
                         body: { text: fancy(
-                            `┏━━━━━━━━━━━━━━━━━━┓\n┃   🥀 ${cat.toUpperCase()}  ${pages.length>1 ? `(${idx+1}/${pages.length})` : ''}\n┗━━━━━━━━━━━━━━━━━━┛\n\n👋 Hello, *${userName}*\nTap a button to execute.`
+                            `╭─── • 🥀 • ───╮\n` +
+                            `   ${cat.toUpperCase()}  ${pages.length>1 ? `(${idx+1}/${pages.length})` : ''}\n` +
+                            `╰─── • 🥀 • ───╯\n\n` +
+                            `👋 Hello, *${userName}*\nTap a button to execute.`
                         ) },
                         footer: { text: fancy(settings.footer) },
                         header: cardHeader,
@@ -64,7 +67,13 @@ module.exports = {
             }
 
             const interactiveMsg = {
-                body: { text: fancy(`┏━━━━━━━━━━━━━━━━━━┓\n┃   👹 INSIDIOUS   ┃\n┗━━━━━━━━━━━━━━━━━━┛\n\n⏱️ Uptime: ${runtime(process.uptime())}\n👤 User: ${userName}`) },
+                body: { text: fancy(
+                    `╭─── • 🥀 • ───╮\n` +
+                    `   👹 INSIDIOUS   \n` +
+                    `╰─── • 🥀 • ───╯\n\n` +
+                    `⏱️ Uptime: ${runtime(process.uptime())}\n` +
+                    `👤 User: ${userName}`
+                ) },
                 footer: { text: fancy("◀️ Swipe for categories ▶️") },
                 header: { title: fancy(settings.botName) },
                 carouselMessage: { cards }
