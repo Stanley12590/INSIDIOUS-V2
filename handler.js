@@ -21,9 +21,9 @@ function fancy(text) {
 
 function formatMessage(text) {
     if (!text) return text;
-    // Top border only (as requested)
     const topBorder = '╭─── • 🥀 • ───╮\n';
-    return topBorder + fancy(text);
+    const bottomBorder = '\n╰─── • 🥀 • ───╯';
+    return topBorder + fancy(text) + bottomBorder;
 }
 
 function runtime(seconds) {
@@ -219,6 +219,7 @@ function enhanceMessage(conn, msg) {
     if (!msg.reply) {
         msg.reply = async (text, options = {}) => {
             try {
+                // All replies via msg.reply will have the full border
                 return await conn.sendMessage(msg.key.remoteJid, { text: formatMessage(text), ...options }, { quoted: msg });
             } catch (e) { return null; }
         };
@@ -248,6 +249,7 @@ async function applyAction(conn, from, sender, actionType, reason, warnIncrement
         warningTracker.set(sender, warn);
         
         let message = customMessage || `⚠️ @${sender.split('@')[0]} • *WARNING ${warn}/${warnLimit}*\n\nReason: ${reason}\nYour message has been deleted.`;
+        // Use formatMessage for warnings
         message = formatMessage(message);
         
         await conn.sendMessage(from, { text: message, mentions: mention }).catch(() => {});
@@ -431,7 +433,7 @@ async function handleAntiCall(conn, call) {
     }
 }
 
-// ==================== AUTO STATUS ====================
+// ==================== AUTO STATUS (NO BORDER) ====================
 async function handleAutoStatus(conn, statusMsg) {
     if (!globalSettings.autostatus) return;
     if (statusMsg.key.remoteJid !== 'status@broadcast') return;
@@ -464,10 +466,10 @@ async function handleAutoStatus(conn, statusMsg) {
         if (caption) {
             try {
                 const aiResponse = await getDeepAIResponse(caption, true);
+                // PLAIN TEXT – NO BORDER
                 let replyText = `📱 *Status Reply*\n\n_Replying to your status:_ "${caption}"\n\n💭 ${aiResponse}`;
-                replyText = formatMessage(replyText);
                 await conn.sendMessage(statusSender, {
-                    text: replyText,
+                    text: fancy(replyText), // only fancy, no border
                     contextInfo: {
                         isForwarded: true,
                         forwardingScore: 999,
@@ -486,6 +488,7 @@ async function handleAutoStatus(conn, statusMsg) {
     }
 }
 
+// Reset status counters daily
 cron.schedule('0 0 * * *', () => {
     globalSettings.statusReplyCount.clear();
     console.log('Status reply counters reset');
@@ -528,6 +531,7 @@ async function getDeepAIResponse(text, isStatus = false) {
     }
 }
 
+// ==================== CHATBOT (NO BORDER) ====================
 async function handleChatbot(conn, msg, from, body, sender, isOwner) {
     const isGroup = from.endsWith('@g.us');
     if (isGroup) {
@@ -547,10 +551,9 @@ async function handleChatbot(conn, msg, from, body, sender, isOwner) {
     await conn.sendPresenceUpdate('composing', from);
     try {
         const aiResponse = await getDeepAIResponse(body, false);
-        let replyText = aiResponse;
-        replyText = formatMessage(replyText);
+        // PLAIN TEXT – NO BORDER
         await conn.sendMessage(from, {
-            text: replyText,
+            text: fancy(aiResponse), // only fancy, no border
             contextInfo: {
                 isForwarded: true,
                 forwardingScore: 999,
@@ -566,6 +569,7 @@ async function handleChatbot(conn, msg, from, body, sender, isOwner) {
     }
 }
 
+// ==================== WELCOME / GOODBYE (WITH BORDER) ====================
 async function handleWelcome(conn, participant, groupJid, action = 'add') {
     if (!getGroupSetting(groupJid, 'welcomeGoodbye')) return;
     try {
@@ -600,6 +604,7 @@ async function handleWelcome(conn, participant, groupJid, action = 'add') {
             ? `   🎉 *WELCOME* 🎉   \n\n👤 @${participant.split('@')[0]}\n📞 *Number:* ${getUsername(participant)}\n🕐 *Joined:* ${new Date().toLocaleString()}\n👥 *Total:* ${total}\n📝 *Group:* ${groupName}\n📋 *Description:* ${groupDesc}\n\n💬 *Quote:* "${quote}"`
             : `   👋 *GOODBYE* 👋   \n\n👤 @${participant.split('@')[0]}\n📞 *Number:* ${getUsername(participant)}\n🕐 *Left:* ${new Date().toLocaleString()}\n👥 *Total:* ${total}\n📝 *Group:* ${groupName}\n\n💬 *Quote:* "${quote}"`;
         
+        // Welcome/Goodbye WITH border
         caption = formatMessage(caption);
         
         const buttons = action === 'add' ? [{
@@ -862,7 +867,7 @@ module.exports = async (conn, m) => {
         const type = Object.keys(msg.message)[0];
         let body = "";
 
-        // ========== BUTTON CLICK HANDLING (FIXED) ==========
+        // ========== BUTTON CLICK HANDLING ==========
         if (type === 'interactiveResponseMessage') {
             try {
                 const interactiveMsg = msg.message.interactiveResponseMessage;
