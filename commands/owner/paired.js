@@ -1,23 +1,23 @@
+const handler = require('../../handler');
+
 module.exports = {
-    name: "paired",
+    name: "addpaired",
+    aliases: ["addowner"],
     ownerOnly: true,
-    description: "Show all paired co‑owners",
+    description: "Manually add a phone number to paired owners list",
+    usage: "<phone_number>",
     
-    execute: async (conn, msg, args, { from, isOwner, reply, config, fancy, getPairedNumbers }) => {
-        if (!isOwner) return reply("❌ This command is for owner only!");
-        
-        const all = getPairedNumbers();
-        const co = all.filter(n => !config.ownerNumber.includes(n));
-        const deployer = all.filter(n => config.ownerNumber.includes(n));
-        
-        let text = `📋 *PAIRED NUMBERS*\n\n`;
-        text += `👑 *Deployer:*\n`;
-        deployer.forEach((num, i) => text += `  ${i+1}. ${num}\n`);
-        text += `\n🔐 *Co‑owners:*\n`;
-        if (co.length === 0) text += `  None\n`;
-        else co.forEach((num, i) => text += `  ${i+1}. ${num}\n`);
-        text += `\n📊 Total co‑owners: ${co.length}/${config.maxCoOwners}`;
-        
-        await reply(fancy(text));
+    execute: async (conn, msg, args, { from, fancy, isOwner, reply }) => {
+        if (!isOwner) return;
+
+        const number = args[0]?.replace(/[^0-9]/g, '');
+        if (!number) return reply("❌ Please provide a phone number.");
+
+        const success = await handler.pairNumber(number);
+        if (success) {
+            reply(`✅ ${number} has been added as a co-owner.`);
+        } else {
+            reply(`❌ Failed to add ${number}. It may already be paired or limit reached.`);
+        }
     }
 };
