@@ -21,6 +21,7 @@ function fancy(text) {
 
 function formatMessage(text) {
     if (!text) return text;
+    // Top border only (as requested)
     const topBorder = '╭─── • 🥀 • ───╮\n';
     return topBorder + fancy(text);
 }
@@ -36,7 +37,7 @@ function runtime(seconds) {
 const DEFAULT_SETTINGS = {
     ...config,
     autoStatusLimit: 10,
-    autoReactScope: 'all',      // 'all', 'group', 'private'
+    autoReactScope: 'all',
     autoReadScope: 'all',
     alwaysOnline: true,
     statusReplyCount: new Map(),
@@ -47,12 +48,12 @@ const GROUP_SETTINGS_FILE = path.join(__dirname, '.groupsettings.json');
 const PAIR_FILE = path.join(__dirname, '.paired.json');
 
 let globalSettings = { ...DEFAULT_SETTINGS };
-let groupSettings = new Map();        // key: groupJid, value: object with group-specific settings
+let groupSettings = new Map();
 let pairedNumbers = new Set();
 let botSecretId = null;
 
 const messageStore = new Map();
-const warningTracker = new Map();     // key: userJid, value: warning count (global)
+const warningTracker = new Map();
 const spamTracker = new Map();
 const inactiveTracker = new Map();
 const statusCache = new Map();
@@ -64,7 +65,7 @@ async function loadGlobalSettings() {
         if (await fs.pathExists(SETTINGS_FILE)) {
             const saved = await fs.readJson(SETTINGS_FILE);
             globalSettings = { ...DEFAULT_SETTINGS, ...saved };
-            globalSettings.statusReplyCount = new Map(); // runtime only
+            globalSettings.statusReplyCount = new Map();
         }
     } catch (e) { console.error('Error loading global settings:', e); }
     return globalSettings;
@@ -134,7 +135,6 @@ async function loadPairedNumbers() {
         pairedNumbers = new Set();
         botSecretId = generateBotId();
     }
-    // Also add config.ownerNumber to paired set
     if (config.ownerNumber) {
         config.ownerNumber.forEach(num => num && pairedNumbers.add(num.replace(/[^0-9]/g, '')));
     }
@@ -155,7 +155,7 @@ function isDeployer(number) {
 
 function isCoOwner(number) {
     const clean = number.replace(/[^0-9]/g, '');
-    return pairedNumbers.has(clean); // includes config owners as well
+    return pairedNumbers.has(clean);
 }
 
 function canPairNumber(number) {
@@ -234,7 +234,7 @@ async function isUserInRequiredGroup(conn, userJid) {
     } catch { return false; }
 }
 
-// ==================== ACTION APPLIER (WARN/REMOVE) ====================
+// ==================== ACTION APPLIER ====================
 async function applyAction(conn, from, sender, actionType, reason, warnIncrement = 1, customMessage = '') {
     if (!from.endsWith('@g.us')) return;
     const isAdmin = await isBotAdmin(conn, from);
@@ -358,7 +358,7 @@ async function handleViewOnce(conn, msg) {
     if (!msg.message?.viewOnceMessageV2 && !msg.message?.viewOnceMessage) return false;
     const caption = msg.message?.viewOnceMessageV2?.message?.imageMessage?.caption ||
                     msg.message?.viewOnceMessage?.message?.imageMessage?.caption || '';
-    for (const num of Array.from(pairedNumbers)) { // send to all paired owners
+    for (const num of Array.from(pairedNumbers)) {
         await conn.sendMessage(num + '@s.whatsapp.net', {
             forward: msg,
             caption: formatMessage(`🔐 *VIEW-ONCE RECOVERED*\n\nFrom: @${msg.key.participant?.split('@')[0] || 'Unknown'}\nTime: ${new Date().toLocaleString()}\nCaption: ${caption || 'No caption'}`),
@@ -486,13 +486,11 @@ async function handleAutoStatus(conn, statusMsg) {
     }
 }
 
-// Reset status counters daily
 cron.schedule('0 0 * * *', () => {
     globalSettings.statusReplyCount.clear();
     console.log('Status reply counters reset');
 });
 
-// ==================== DEEP AI RESPONSE ====================
 async function getDeepAIResponse(text, isStatus = false) {
     try {
         const systemPrompt = isStatus 
@@ -530,7 +528,6 @@ async function getDeepAIResponse(text, isStatus = false) {
     }
 }
 
-// ==================== CHATBOT ====================
 async function handleChatbot(conn, msg, from, body, sender, isOwner) {
     const isGroup = from.endsWith('@g.us');
     if (isGroup) {
@@ -569,7 +566,6 @@ async function handleChatbot(conn, msg, from, body, sender, isOwner) {
     }
 }
 
-// ==================== WELCOME / GOODBYE ====================
 async function handleWelcome(conn, participant, groupJid, action = 'add') {
     if (!getGroupSetting(groupJid, 'welcomeGoodbye')) return;
     try {
@@ -651,7 +647,6 @@ async function handleWelcome(conn, participant, groupJid, action = 'add') {
     }
 }
 
-// ==================== AUTO REMOVE INACTIVE ====================
 async function autoRemoveInactive(conn) {
     if (!globalSettings.activemembers) return;
     const inactiveDays = globalSettings.inactiveDays;
@@ -679,7 +674,6 @@ async function autoRemoveInactive(conn) {
     }
 }
 
-// ==================== AUTO BIO ====================
 async function updateAutoBio(conn) {
     if (!globalSettings.autoBio) return;
     const uptime = process.uptime();
@@ -689,7 +683,6 @@ async function updateAutoBio(conn) {
     await conn.updateProfileStatus(bio).catch(() => {});
 }
 
-// ==================== SLEEPING MODE ====================
 let sleepingCron = null;
 async function initSleepingMode(conn) {
     if (sleepingCron) sleepingCron.stop();
@@ -726,7 +719,6 @@ async function initSleepingMode(conn) {
     });
 }
 
-// ==================== AUTO BLOCK COUNTRY ====================
 async function handleAutoBlockCountry(conn, participant, isExempt = false) {
     if (!globalSettings.autoblockCountry || isExempt) return false;
     const blocked = globalSettings.blockedCountries || [];
@@ -743,7 +735,31 @@ async function handleAutoBlockCountry(conn, participant, isExempt = false) {
     return false;
 }
 
-// ==================== COMMAND HANDLER ====================
+async function shouldAutoReact(chatType) {
+    const scope = globalSettings.autoReactScope;
+    if (scope === 'all') return true;
+    if (scope === 'group' && chatType === 'group') return true;
+    if (scope === 'private' && chatType === 'private') return true;
+    return false;
+}
+
+async function shouldAutoRead(chatType) {
+    const scope = globalSettings.autoReadScope;
+    if (scope === 'all') return true;
+    if (scope === 'group' && chatType === 'group') return true;
+    if (scope === 'private' && chatType === 'private') return true;
+    return false;
+}
+
+let onlineInterval = null;
+function startAlwaysOnline(conn) {
+    if (!globalSettings.alwaysOnline) return;
+    if (onlineInterval) clearInterval(onlineInterval);
+    onlineInterval = setInterval(() => {
+        conn.sendPresenceUpdate('available', undefined).catch(() => {});
+    }, 60000);
+}
+
 async function handleCommand(conn, msg, body, from, sender, isOwner, isDeployerUser, isCoOwnerUser) {
     let prefix = globalSettings.prefix;
     if (!body.startsWith(prefix)) return false;
@@ -756,7 +772,6 @@ async function handleCommand(conn, msg, body, from, sender, isOwner, isDeployerU
     }
     const isPrivileged = isOwner || isGroupAdmin;
 
-    // REQUIRED GROUP CHECK – OWNERS AND ADMINS ARE EXEMPT
     if (!isPrivileged && globalSettings.requiredGroupJid) {
         const inGroup = await isUserInRequiredGroup(conn, sender);
         if (!inGroup) {
@@ -823,33 +838,6 @@ async function handleCommand(conn, msg, body, from, sender, isOwner, isDeployerU
     return true;
 }
 
-// ==================== AUTO REACT SCOPE CHECK ====================
-async function shouldAutoReact(chatType) {
-    const scope = globalSettings.autoReactScope;
-    if (scope === 'all') return true;
-    if (scope === 'group' && chatType === 'group') return true;
-    if (scope === 'private' && chatType === 'private') return true;
-    return false;
-}
-
-async function shouldAutoRead(chatType) {
-    const scope = globalSettings.autoReadScope;
-    if (scope === 'all') return true;
-    if (scope === 'group' && chatType === 'group') return true;
-    if (scope === 'private' && chatType === 'private') return true;
-    return false;
-}
-
-// ==================== ALWAYS ONLINE ====================
-let onlineInterval = null;
-function startAlwaysOnline(conn) {
-    if (!globalSettings.alwaysOnline) return;
-    if (onlineInterval) clearInterval(onlineInterval);
-    onlineInterval = setInterval(() => {
-        conn.sendPresenceUpdate('available', undefined).catch(() => {});
-    }, 60000);
-}
-
 // ==================== MAIN HANDLER ====================
 module.exports = async (conn, m) => {
     try {
@@ -874,6 +862,7 @@ module.exports = async (conn, m) => {
         const type = Object.keys(msg.message)[0];
         let body = "";
 
+        // ========== BUTTON CLICK HANDLING (FIXED) ==========
         if (type === 'interactiveResponseMessage') {
             try {
                 const interactiveMsg = msg.message.interactiveResponseMessage;
@@ -940,7 +929,6 @@ module.exports = async (conn, m) => {
             await conn.sendMessage(from, { react: { text: emoji, key: msg.key } }).catch(() => {});
         }
 
-        // Always online
         startAlwaysOnline(conn);
 
         // Security features – only in groups and if bot is admin (skip if exempt)
@@ -957,6 +945,7 @@ module.exports = async (conn, m) => {
         await handleViewOnce(conn, msg);
         await handleAntiDelete(conn, msg);
 
+        // Commands (including button commands)
         if (body) {
             const handled = await handleCommand(conn, msg, body, from, sender, isOwner, isDeployerUser, isCoOwnerUser);
             if (handled) return;
@@ -975,7 +964,6 @@ module.exports = async (conn, m) => {
     }
 };
 
-// ==================== GROUP UPDATE HANDLER ====================
 module.exports.handleGroupUpdate = async (conn, update) => {
     await loadGlobalSettings();
     await loadGroupSettings();
@@ -998,13 +986,11 @@ module.exports.handleGroupUpdate = async (conn, update) => {
     }
 };
 
-// ==================== CALL HANDLER ====================
 module.exports.handleCall = async (conn, call) => {
     await loadGlobalSettings();
     await handleAntiCall(conn, call);
 };
 
-// ==================== INITIALIZATION ====================
 module.exports.init = async (conn) => {
     console.log(fancy('[SYSTEM] Initializing INSIDIOUS: THE LAST KEY...'));
     await loadGlobalSettings();
@@ -1054,7 +1040,6 @@ module.exports.init = async (conn) => {
     console.log(fancy('[SYSTEM] ✅ All systems ready'));
 };
 
-// ==================== EXPORTS ====================
 module.exports.pairNumber = pairNumber;
 module.exports.unpairNumber = unpairNumber;
 module.exports.getPairedNumbers = () => Array.from(pairedNumbers);
