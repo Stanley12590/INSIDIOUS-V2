@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-// USER SCHEMA
+// ==================== USER SCHEMA ====================
 const UserSchema = new mongoose.Schema({
     jid: { 
         type: String, 
@@ -58,7 +58,7 @@ const UserSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// GROUP SCHEMA
+// ==================== GROUP SCHEMA ====================
 const GroupSchema = new mongoose.Schema({
     jid: { 
         type: String, 
@@ -104,7 +104,7 @@ const GroupSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// SETTINGS SCHEMA (Global Bot Settings)
+// ==================== SETTINGS SCHEMA (Global) ====================
 const SettingsSchema = new mongoose.Schema({
     antilink: { 
         type: Boolean, 
@@ -186,6 +186,11 @@ const SettingsSchema = new mongoose.Schema({
     ownerNumbers: [{
         type: String
     }],
+    botSecretId: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
     updatedAt: { 
         type: Date, 
         default: Date.now 
@@ -194,7 +199,7 @@ const SettingsSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// ✅ **SESSION SCHEMA FOR MONGODB STORAGE**
+// ==================== SESSION SCHEMA ====================
 const SessionSchema = new mongoose.Schema({
     sessionId: { 
         type: String, 
@@ -251,7 +256,7 @@ const SessionSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// MESSAGE SCHEMA (Optional - for storing messages)
+// ==================== MESSAGE SCHEMA ====================
 const MessageSchema = new mongoose.Schema({
     messageId: {
         type: String,
@@ -296,7 +301,7 @@ const MessageSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// BAN SCHEMA
+// ==================== BAN SCHEMA ====================
 const BanSchema = new mongoose.Schema({
     jid: {
         type: String,
@@ -324,7 +329,7 @@ const BanSchema = new mongoose.Schema({
     }
 });
 
-// COMMAND STATS SCHEMA
+// ==================== COMMAND STATS SCHEMA ====================
 const CommandStatsSchema = new mongoose.Schema({
     command: {
         type: String,
@@ -346,7 +351,7 @@ const CommandStatsSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Create indexes for better performance
+// ==================== INDEXES ====================
 UserSchema.index({ lastActive: -1 });
 UserSchema.index({ messageCount: -1 });
 GroupSchema.index({ participants: -1 });
@@ -354,7 +359,7 @@ SessionSchema.index({ lastActive: -1 });
 MessageSchema.index({ timestamp: -1 });
 MessageSchema.index({ jid: 1, timestamp: -1 });
 
-// Create models
+// ==================== CREATE MODELS ====================
 const User = mongoose.model('User', UserSchema);
 const Group = mongoose.model('Group', GroupSchema);
 const Settings = mongoose.model('Settings', SettingsSchema);
@@ -363,13 +368,12 @@ const Message = mongoose.model('Message', MessageSchema);
 const Ban = mongoose.model('Ban', BanSchema);
 const CommandStats = mongoose.model('CommandStats', CommandStatsSchema);
 
-// Helper functions for MongoDB operations
+// ==================== HELPER FUNCTIONS ====================
 
-// Find or create user
+// ----- User Helpers -----
 User.findOrCreate = async function(jid, name = 'Unknown') {
     try {
         let user = await this.findOne({ jid });
-        
         if (!user) {
             user = await this.create({
                 jid,
@@ -378,7 +382,6 @@ User.findOrCreate = async function(jid, name = 'Unknown') {
                 lastActive: new Date()
             });
         }
-        
         return user;
     } catch (error) {
         console.error('Error in findOrCreate user:', error);
@@ -386,7 +389,6 @@ User.findOrCreate = async function(jid, name = 'Unknown') {
     }
 };
 
-// Update user activity
 User.updateActivity = async function(jid) {
     try {
         await this.findOneAndUpdate(
@@ -401,7 +403,6 @@ User.updateActivity = async function(jid) {
     }
 };
 
-// Get user stats
 User.getStats = async function() {
     try {
         const total = await this.countDocuments();
@@ -410,19 +411,18 @@ User.getStats = async function() {
         });
         const blocked = await this.countDocuments({ isBlocked: true });
         const owners = await this.countDocuments({ isOwner: true });
-        
-        return { total, active, blocked, owners };
+        const paired = await this.countDocuments({ isPaired: true });
+        return { total, active, blocked, owners, paired };
     } catch (error) {
         console.error('Error getting user stats:', error);
-        return { total: 0, active: 0, blocked: 0, owners: 0 };
+        return { total: 0, active: 0, blocked: 0, owners: 0, paired: 0 };
     }
 };
 
-// Group helper functions
+// ----- Group Helpers -----
 Group.findOrCreate = async function(jid, name = 'Unknown Group') {
     try {
         let group = await this.findOne({ jid });
-        
         if (!group) {
             group = await this.create({
                 jid,
@@ -430,7 +430,6 @@ Group.findOrCreate = async function(jid, name = 'Unknown Group') {
                 joinedAt: new Date()
             });
         }
-        
         return group;
     } catch (error) {
         console.error('Error in findOrCreate group:', error);
@@ -459,7 +458,6 @@ Group.getStats = async function() {
     try {
         const total = await this.countDocuments();
         const withAdmins = await this.countDocuments({ admins: { $ne: [] } });
-        
         return { total, withAdmins };
     } catch (error) {
         console.error('Error getting group stats:', error);
@@ -467,7 +465,7 @@ Group.getStats = async function() {
     }
 };
 
-// Session helper functions
+// ----- Session Helpers -----
 Session.saveSession = async function(sessionId, creds, keys = {}, extra = {}) {
     try {
         return await this.findOneAndUpdate(
@@ -518,15 +516,13 @@ Session.getActiveSessions = async function() {
     }
 };
 
-// Settings helper functions
+// ----- Settings Helpers -----
 Settings.getSettings = async function() {
     try {
         let settings = await this.findOne();
-        
         if (!settings) {
             settings = await this.create({});
         }
-        
         return settings;
     } catch (error) {
         console.error('Error getting settings:', error);
@@ -547,19 +543,16 @@ Settings.updateSettings = async function(updates) {
     }
 };
 
-// Command stats helper functions
+// ----- Command Stats Helpers -----
 CommandStats.incrementCommand = async function(command, userId) {
     try {
         const stat = await this.findOne({ command });
-        
         if (stat) {
             stat.count += 1;
             stat.lastUsed = new Date();
-            
             if (!stat.users.includes(userId)) {
                 stat.users.push(userId);
             }
-            
             await stat.save();
             return stat;
         } else {
@@ -585,11 +578,10 @@ CommandStats.getTopCommands = async function(limit = 10) {
     }
 };
 
-// Ban helper functions
+// ----- Ban Helpers -----
 Ban.banUser = async function(jid, reason = 'No reason provided', bannedBy = 'system', days = null) {
     try {
         const expiresAt = days ? new Date(Date.now() + days * 24 * 60 * 60 * 1000) : null;
-        
         return await this.findOneAndUpdate(
             { jid },
             {
@@ -621,14 +613,11 @@ Ban.unbanUser = async function(jid) {
 Ban.isBanned = async function(jid) {
     try {
         const ban = await this.findOne({ jid });
-        
         if (!ban) return false;
-        
         if (ban.expiresAt && ban.expiresAt < new Date()) {
             await this.deleteOne({ jid });
             return false;
         }
-        
         return true;
     } catch (error) {
         console.error('Error checking ban status:', error);
@@ -636,7 +625,7 @@ Ban.isBanned = async function(jid) {
     }
 };
 
-// Export all models and helpers
+// ==================== EXPORT MODELS ====================
 module.exports = {
     User,
     Group,
