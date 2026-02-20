@@ -1,33 +1,43 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const mongoose = require("mongoose");
 const path = require("path");
-const fs = require('fs-extra');
-const { Session } = require('./database/models');
+const fs = require('fs');
+const { Session } = require('./database/models'); // 🔥 SESSION MODEL (ONDOA MAELEZO)
 
+// ==================== HANDLER ====================
 const handler = require('./handler');
 
-// ✅ FANCY FUNCTION
+// ✅ **FANCY FUNCTION**
 function fancy(text) {
     if (!text || typeof text !== 'string') return text;
-    const fancyMap = {
-        a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ',
-        j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ',
-        s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ',
-        A: 'ᴀ', B: 'ʙ', C: 'ᴄ', D: 'ᴅ', E: 'ᴇ', F: 'ꜰ', G: 'ɢ', H: 'ʜ', I: 'ɪ',
-        J: 'ᴊ', K: 'ᴋ', L: 'ʟ', M: 'ᴍ', N: 'ɴ', O: 'ᴏ', P: 'ᴘ', Q: 'ǫ', R: 'ʀ',
-        S: 'ꜱ', T: 'ᴛ', U: 'ᴜ', V: 'ᴠ', W: 'ᴡ', X: 'x', Y: 'ʏ', Z: 'ᴢ'
-    };
-    let result = '';
-    for (let i = 0; i < text.length; i++) result += fancyMap[text[i]] || text[i];
-    return result;
+    
+    try {
+        const fancyMap = {
+            a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ',
+            j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ',
+            s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ',
+            A: 'ᴀ', B: 'ʙ', C: 'ᴄ', D: 'ᴅ', E: 'ᴇ', F: 'ꜰ', G: 'ɢ', H: 'ʜ', I: 'ɪ',
+            J: 'ᴊ', K: 'ᴋ', L: 'ʟ', M: 'ᴍ', N: 'ɴ', O: 'ᴏ', P: 'ᴘ', Q: 'ǫ', R: 'ʀ',
+            S: 'ꜱ', T: 'ᴛ', U: 'ᴜ', V: 'ᴠ', W: 'ᴡ', X: 'x', Y: 'ʏ', Z: 'ᴢ'
+        };
+        
+        let result = '';
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            result += fancyMap[char] || char;
+        }
+        return result;
+    } catch (e) {
+        return text;
+    }
 }
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ MONGODB CONNECTION
+// ✅ **MONGODB CONNECTION (LAZIMA IWE IMEUNGANISHWA)**
 console.log(fancy("🔗 Connecting to MongoDB..."));
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
 
@@ -36,26 +46,39 @@ mongoose.connect(MONGODB_URI, {
     socketTimeoutMS: 45000,
     maxPoolSize: 10
 })
-.then(() => console.log(fancy("✅ MongoDB Connected")))
+.then(() => {
+    console.log(fancy("✅ MongoDB Connected"));
+})
 .catch((err) => {
-    console.log(fancy("❌ MongoDB Connection FAILED: " + err.message));
-    process.exit(1);
+    console.log(fancy("❌ MongoDB Connection FAILED"));
+    console.log(fancy("💡 Error: " + err.message));
+    process.exit(1); // 🔥 TOKA KAMA HAKUNA DATABASE
 });
 
+// ✅ **MIDDLEWARE**
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ✅ **CREATE PUBLIC FOLDER IF NOT EXISTS**
 if (!fs.existsSync(path.join(__dirname, 'public'))) {
     fs.mkdirSync(path.join(__dirname, 'public'), { recursive: true });
 }
 
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
+// ✅ **SIMPLE ROUTES**
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
+app.get('/dashboard', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+});
+
+// ✅ **GLOBAL VARIABLES**
 let globalConn = null;
 let isConnected = false;
 let botStartTime = Date.now();
 
+// ✅ **LOAD CONFIG**
 let config = {};
 try {
     config = require('./config');
@@ -67,12 +90,11 @@ try {
         ownerNumber: ['255000000000'],
         botName: 'INSIDIOUS',
         workMode: 'public',
-        botImage: 'https://files.catbox.moe/f3c07u.jpg',
-        newsletterJid: '120363404317544295@newsletter'
+        botImage: 'https://files.catbox.moe/f3c07u.jpg'
     };
 }
 
-// ✅ SESSION HELPERS (MongoDB)
+// 🔥 SESSION HELPERS (MongoDB)
 async function saveSessionToMongoDB(number, creds, keys = {}) {
     try {
         const sanitizedNumber = number.replace(/[^0-9]/g, '');
@@ -100,14 +122,18 @@ async function loadSessionFromMongoDB(number) {
     }
 }
 
-// ✅ MAIN BOT – HAKUNA AUTO-RECONNECT
+// ✅ **MAIN BOT FUNCTION – HAKUNA AUTO-RECONNECT**
 async function startBot() {
     try {
         console.log(fancy("🚀 Starting INSIDIOUS..."));
         const botNumber = 'insidious_main';
+
+        // 🔥 JARIBU KUPakia SESSION KUTOKA MONGODB
         const existingSession = await loadSessionFromMongoDB(botNumber);
+        
         const sessionPath = path.join(__dirname, 'insidious_session');
         if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
+
         if (existingSession) {
             console.log(fancy("📦 Loading session from MongoDB..."));
             fs.writeFileSync(
@@ -115,9 +141,12 @@ async function startBot() {
                 JSON.stringify(existingSession.creds, null, 2)
             );
         }
+        
+        // ✅ **AUTHENTICATION**
         const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
         const { version } = await fetchLatestBaileysVersion();
 
+        // ✅ **CREATE CONNECTION**
         const conn = makeWASocket({
             version,
             auth: { 
@@ -135,30 +164,48 @@ async function startBot() {
         globalConn = conn;
         botStartTime = Date.now();
 
+        // ✅ **CONNECTION EVENT HANDLER**
         conn.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
+            
             if (connection === 'open') {
                 console.log(fancy("👹 INSIDIOUS: THE LAST KEY ACTIVATED"));
                 console.log(fancy("✅ Bot is now online"));
+                
                 isConnected = true;
+                
                 let botName = conn.user?.name || "INSIDIOUS";
                 let botNumber = conn.user?.id?.split(':')[0] || "Unknown";
                 const botSecret = handler.getBotId ? handler.getBotId() : 'Unknown';
                 const pairedCount = handler.getPairedNumbers ? handler.getPairedNumbers().length : 0;
+                
                 console.log(fancy(`🤖 Name: ${botName}`));
                 console.log(fancy(`📞 Number: ${botNumber}`));
                 console.log(fancy(`🆔 Bot ID: ${botSecret}`));
-                console.log(fancy(`👥 Owners: ${pairedCount}`));
+                console.log(fancy(`👥 Paired Owners: ${pairedCount}`));
+                
                 try {
-                    if (handler && typeof handler.init === 'function') await handler.init(conn);
-                } catch (e) { console.error("Handler init error:", e.message); }
-                if (conn.authState?.creds) await saveSessionToMongoDB(botNumber, conn.authState.creds, {});
+                    if (handler && typeof handler.init === 'function') {
+                        await handler.init(conn);
+                        console.log(fancy("✅ Handler initialized"));
+                    }
+                } catch (e) {
+                    console.error(fancy("❌ Handler init error:"), e.message);
+                }
+
+                // 🔥 HIFADHI SESSION KWENYE MONGODB
+                if (conn.authState?.creds) {
+                    await saveSessionToMongoDB(botNumber, conn.authState.creds, {});
+                }
+                
+                // ✅ **SEND WELCOME MESSAGE TO OWNER**
                 setTimeout(async () => {
                     try {
                         if (config.ownerNumber && config.ownerNumber.length > 0) {
                             const ownerNum = config.ownerNumber[0].replace(/[^0-9]/g, '');
                             if (ownerNum.length >= 10) {
                                 const ownerJid = ownerNum + '@s.whatsapp.net';
+                                
                                 const welcomeMsg = `
 ╭─── • 🥀 • ───╮
    INSIDIOUS: THE LAST KEY
@@ -168,117 +215,142 @@ async function startBot() {
 🤖 *Name:* ${botName}
 📞 *Number:* ${botNumber}
 🆔 *Bot ID:* ${botSecret}
-👥 *Owners:* ${pairedCount}
+👥 *Paired Owners:* ${pairedCount}
 
-⚡ *Status:* ONLINE
-📦 *Storage:* MongoDB
+⚡ *Status:* ONLINE & ACTIVE
+
+📊 *ALL FEATURES ACTIVE:*
+🛡️ Anti View Once: ✅
+🗑️ Anti Delete: ✅
+🤖 AI Chatbot: ✅
+⚡ Auto Typing: ✅
+📼 Auto Recording: ✅
+👀 Auto Read: ✅
+❤️ Auto React: ✅
+🎉 Welcome/Goodbye: ✅
+
+🔧 *Commands:* All working
+📁 *Database:* Connected
+🚀 *Performance:* Optimal
+
 👑 *Developer:* STANYTZ
-💾 *Version:* 2.1.1`;
+💾 *Version:* 2.1.1 | Year: 2025`;
+                                
                                 await conn.sendMessage(ownerJid, { 
-                                    image: { url: config.botImage },
+                                    image: { url: config.botImage || "https://files.catbox.moe/f3c07u.jpg" },
                                     caption: welcomeMsg,
                                     contextInfo: { isForwarded: true }
                                 });
+                                console.log(fancy("✅ Welcome message sent to owner"));
                             }
                         }
-                    } catch (e) {}
+                    } catch (e) {
+                        console.log(fancy("⚠️ Could not send welcome message:"), e.message);
+                    }
                 }, 3000);
             }
+            
             if (connection === 'close') {
                 console.log(fancy("🔌 Connection closed"));
                 isConnected = false;
-                // HAKUNA AUTO-RECONNECT – PLATFORM ITASHUGHULIKIA
+                
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                
+                // 🔥 HAKUNA AUTO-RECONNECT – TUNAACHA TU
+                // PLATFORM ITASHUGHULIKIA KURESTART
+                if (statusCode === DisconnectReason.loggedOut) {
+                    console.log(fancy("🚫 Logged out. Please scan QR again."));
+                }
             }
         });
 
+        // ✅ **CREDENTIALS UPDATE**
         conn.ev.on('creds.update', async () => {
             if (conn.authState?.creds) {
                 await saveCreds();
+                // 🔥 HIFADHI SESSION KWENYE MONGODB
                 await saveSessionToMongoDB('insidious_main', conn.authState.creds, {});
             }
         });
 
+        // ✅ **MESSAGE HANDLER**
         conn.ev.on('messages.upsert', async (m) => {
-            try { if (handler && typeof handler === 'function') await handler(conn, m); } 
-            catch (error) { console.error("Message handler error:", error.message); }
+            try {
+                if (handler && typeof handler === 'function') {
+                    await handler(conn, m);
+                }
+            } catch (error) {
+                console.error("Message handler error:", error.message);
+            }
         });
 
+        // ✅ **GROUP UPDATE HANDLER**
         conn.ev.on('group-participants.update', async (update) => {
-            try { if (handler && handler.handleGroupUpdate) await handler.handleGroupUpdate(conn, update); } 
-            catch (error) { console.error("Group update error:", error.message); }
+            try {
+                if (handler && handler.handleGroupUpdate) {
+                    await handler.handleGroupUpdate(conn, update);
+                }
+            } catch (error) {
+                console.error("Group update error:", error.message);
+            }
         });
 
+        // ✅ **CALL HANDLER**
         conn.ev.on('call', async (call) => {
-            try { if (handler && handler.handleCall) await handler.handleCall(conn, call); } 
-            catch (error) { console.error("Call handler error:", error.message); }
+            try {
+                if (handler && handler.handleCall) {
+                    await handler.handleCall(conn, call);
+                }
+            } catch (error) {
+                console.error("Call handler error:", error.message);
+            }
         });
 
-        console.log(fancy("🚀 Bot ready – inaendelea 24/7"));
+        console.log(fancy("🚀 Bot ready for pairing via web interface"));
         
     } catch (error) {
         console.error("Start error:", error.message);
+        // 🔥 HAKUNA AUTO-RESTART – TUNAACHA TU
     }
 }
 
+// ✅ **START BOT**
 startBot();
 
 // ==================== HTTP ENDPOINTS ====================
 
-// ✅ PAIRING – HAIANGALII isConnected, INATUMIA SOCKET YAKE
+// ✅ **PAIRING ENDPOINT**
 app.get('/pair', async (req, res) => {
-    const tempDir = path.join(__dirname, 'temp_pair_' + Date.now());
-    let tempConn = null;
     try {
         let num = req.query.num;
-        if (!num) return res.json({ success: false, error: "Provide number! Example: /pair?num=255123456789" });
+        if (!num) {
+            return res.json({ success: false, error: "Provide number! Example: /pair?num=255123456789" });
+        }
+        
         const cleanNum = num.replace(/[^0-9]/g, '');
-        if (cleanNum.length < 10) return res.json({ success: false, error: "Invalid number. Must be at least 10 digits." });
-
+        if (cleanNum.length < 10) {
+            return res.json({ success: false, error: "Invalid number. Must be at least 10 digits." });
+        }
+        
+        if (!globalConn) {
+            return res.json({ success: false, error: "Bot is initializing. Please try again in a few seconds." });
+        }
+        
         console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
-
-        await fs.ensureDir(tempDir);
-        const { state, saveCreds } = await useMultiFileAuthState(tempDir);
-        const { version } = await fetchLatestBaileysVersion();
-
-        tempConn = makeWASocket({
-            version,
-            auth: { 
-                creds: state.creds, 
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })) 
-            },
-            logger: pino({ level: "silent" }),
-            browser: Browsers.macOS("Safari"),
-            syncFullHistory: false,
-            connectTimeoutMs: 60000,
-            keepAliveIntervalMs: 10000,
-            markOnlineOnConnect: false
-        });
-
-        // Subiri socket iwe tayari
-        await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error('Socket timeout')), 10000);
-            tempConn.ev.on('connection.update', (update) => {
-                if (update.connection === 'open') {
-                    clearTimeout(timeout);
-                    resolve();
-                }
-            });
-        });
-
+        
         const code = await Promise.race([
-            tempConn.requestPairingCode(cleanNum),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
+            globalConn.requestPairingCode(cleanNum),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout - no response from WhatsApp')), 30000))
         ]);
-
-        if (tempConn?.ws) tempConn.ws.close();
-        await fs.remove(tempDir).catch(() => {});
-
-        res.json({ success: true, code, message: `8-digit pairing code: ${code}` });
+        
+        res.json({ 
+            success: true, 
+            code: code,
+            message: `8-digit pairing code: ${code}`
+        });
         
     } catch (err) {
         console.error("Pairing error:", err.message);
-        if (tempConn?.ws) tempConn.ws.close();
-        await fs.remove(tempDir).catch(() => {});
         if (err.message.includes("already paired")) {
             res.json({ success: true, message: "Number already paired" });
         } else {
@@ -287,53 +359,87 @@ app.get('/pair', async (req, res) => {
     }
 });
 
-// ✅ UNPAIR
+// ✅ **UNPAIR ENDPOINT**
 app.get('/unpair', async (req, res) => {
     try {
         let num = req.query.num;
-        if (!num) return res.json({ success: false, error: "Provide number! Example: /unpair?num=255123456789" });
+        if (!num) {
+            return res.json({ success: false, error: "Provide number! Example: /unpair?num=255123456789" });
+        }
+        
         const cleanNum = num.replace(/[^0-9]/g, '');
-        if (cleanNum.length < 10) return res.json({ success: false, error: "Invalid number" });
+        if (cleanNum.length < 10) {
+            return res.json({ success: false, error: "Invalid number" });
+        }
+        
         let result = false;
-        if (handler && handler.unpairNumber) result = await handler.unpairNumber(cleanNum);
-        res.json({ success: result, message: result ? `Number ${cleanNum} unpaired successfully` : `Failed to unpair ${cleanNum}` });
+        if (handler && handler.unpairNumber) {
+            result = await handler.unpairNumber(cleanNum);
+        } else {
+            return res.json({ success: false, error: "Unpair function not available in handler" });
+        }
+        
+        res.json({ 
+            success: result, 
+            message: result ? `Number ${cleanNum} unpaired successfully` : `Failed to unpair ${cleanNum}`
+        });
+        
     } catch (err) {
-        res.json({ success: false, error: err.message });
+        console.error("Unpair error:", err.message);
+        res.json({ success: false, error: "Failed: " + err.message });
     }
 });
 
-// ✅ HEALTH CHECK
+// ✅ **HEALTH CHECK**
 app.get('/health', (req, res) => {
     const uptime = process.uptime();
+    const hours = Math.floor(uptime / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+    const seconds = Math.floor(uptime % 60);
+    
     res.json({
         status: 'healthy',
         connected: isConnected,
-        uptime: `${Math.floor(uptime/3600)}h ${Math.floor((uptime%3600)/60)}m ${Math.floor(uptime%60)}s`,
-        mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+        uptime: `${hours}h ${minutes}m ${seconds}s`,
+        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
     });
 });
 
-// ✅ BOT INFO
+// ✅ **BOT INFO ENDPOINT**
 app.get('/botinfo', (req, res) => {
-    if (!globalConn || !globalConn.user) return res.json({ connected: false });
+    if (!globalConn || !globalConn.user) {
+        return res.json({ 
+            success: false,
+            error: "Bot not connected",
+            connected: isConnected
+        });
+    }
+    
     const botSecret = handler.getBotId ? handler.getBotId() : 'Unknown';
     const pairedCount = handler.getPairedNumbers ? handler.getPairedNumbers().length : 0;
+    
     res.json({
-        connected: true,
-        botName: globalConn.user?.name,
-        botNumber: globalConn.user?.id?.split(':')[0],
-        botSecret,
+        success: true,
+        botName: globalConn.user?.name || "INSIDIOUS",
+        botNumber: globalConn.user?.id?.split(':')[0] || "Unknown",
+        botJid: globalConn.user?.id || "Unknown",
+        botSecret: botSecret,
         pairedOwners: pairedCount,
+        connected: isConnected,
         uptime: Date.now() - botStartTime
     });
 });
 
-// ✅ START SERVER
+// ✅ **START SERVER**
 app.listen(PORT, () => {
-    console.log(fancy(`🌐 Server running on port ${PORT}`));
-    console.log(fancy(`🔗 Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
+    console.log(fancy(`🌐 Web Interface: http://localhost:${PORT}`));
+    console.log(fancy(`🔗 8-digit Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
+    console.log(fancy(`🗑️  Unpair: http://localhost:${PORT}/unpair?num=255XXXXXXXXX`));
+    console.log(fancy(`🤖 Bot Info: http://localhost:${PORT}/botinfo`));
+    console.log(fancy(`❤️ Health: http://localhost:${PORT}/health`));
     console.log(fancy("👑 Developer: STANYTZ"));
-    console.log(fancy("📦 Storage: MongoDB – sessions persist across restarts"));
+    console.log(fancy("📅 Version: 2.1.1 | Year: 2025"));
+    console.log(fancy("🙏 Special Thanks: REDTECH"));
 });
 
 module.exports = app;
