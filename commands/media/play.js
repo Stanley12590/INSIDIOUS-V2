@@ -11,7 +11,7 @@ module.exports = {
     execute: async (conn, msg, args, { from, fancy, reply }) => {
         try {
             if (!args.length) {
-                return reply("❌ Please provide a song name or keyword.\nExample: .play never gonna give you up");
+                return reply("❌ Please provide a song name.\nExample: .play never gonna give you up");
             }
 
             // Send searching message
@@ -35,20 +35,20 @@ module.exports = {
             const response = await axios.get(apiURL);
 
             if (response.status !== 200 || !response.data || !response.data.downloadLink) {
-                return reply("❌ Failed to retrieve the audio download link. Please try again later.");
+                return reply("❌ Failed to retrieve the audio. Please try again later.");
             }
 
             const downloadLink = response.data.downloadLink;
 
             // Determine greeting based on time
-            moment.tz.setDefault("Africa/Dar_es_Salaam"); // change to your timezone
+            moment.tz.setDefault("Africa/Dar_es_Salaam");
             const hour = moment().hour();
             let greeting = "Good Morning";
             if (hour >= 12 && hour < 18) greeting = "Good Afternoon!";
             else if (hour >= 18) greeting = "Good Evening!";
             else if (hour >= 22 || hour < 5) greeting = "Good Night";
 
-            // Send thumbnail with info – FORWARDED FROM YOUR CHANNEL
+            // Send thumbnail with info
             await conn.sendMessage(from, {
                 image: { url: video.thumbnail },
                 caption: fancy(
@@ -62,14 +62,14 @@ module.exports = {
                     isForwarded: true,
                     forwardingScore: 999,
                     forwardedNewsletterMessageInfo: {
-                        newsletterJid: "120363404317544295@newsletter", // replace with your channel JID
+                        newsletterJid: "120363404317544295@newsletter",
                         newsletterName: "INSIDIOUS BOT",
                         serverMessageId: 100
                     }
                 }
             }, { quoted: msg });
 
-            // Send the audio – FORWARDED FROM YOUR CHANNEL
+            // Send the audio
             await conn.sendMessage(from, {
                 audio: { url: downloadLink },
                 mimetype: 'audio/mpeg',
@@ -81,13 +81,6 @@ module.exports = {
                         newsletterJid: "120363404317544295@newsletter",
                         newsletterName: "INSIDIOUS BOT",
                         serverMessageId: 100
-                    },
-                    externalAdReply: {
-                        title: "⇆ㅤ ||◁ㅤ❚❚ㅤ▷||ㅤ ↻",
-                        mediaType: 1,
-                        previewType: 0,
-                        thumbnailUrl: video.thumbnail,
-                        renderLargerThumbnail: true
                     }
                 }
             }, { quoted: msg });
@@ -95,7 +88,7 @@ module.exports = {
         } catch (err) {
             console.error('[PLAY] Error:', err);
             if (err.response && err.response.status === 500) {
-                reply("❌ The audio service is currently experiencing issues. Please try again later.");
+                reply("❌ The audio service is temporarily unavailable. Try again later.");
             } else {
                 reply("❌ An error occurred: " + err.message);
             }
