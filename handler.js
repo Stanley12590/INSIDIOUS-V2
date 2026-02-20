@@ -169,7 +169,7 @@ async function saveGroupSettings() {
     } catch (e) { console.error('Error saving group settings:', e); }
 }
 
-// Group setting helpers – defined BEFORE exports
+// ✅ GROUP SETTING HELPERS – DEFINED BEFORE EXPORTS
 function getGroupSetting(groupJid, key) {
     if (!groupJid || groupJid === 'global') return globalSettings[key];
     const gs = groupSettings.get(groupJid) || {};
@@ -1105,7 +1105,7 @@ module.exports.init = async (conn) => {
 // ==================== EXPORTS ====================
 module.exports.loadGlobalSettings = loadGlobalSettings;
 module.exports.saveGlobalSettings = saveGlobalSettings;
-module.exports.getGroupSetting = getGroupSetting;  // <-- DEFINED
+module.exports.getGroupSetting = getGroupSetting;
 module.exports.setGroupSetting = setGroupSetting;
 module.exports.loadSettings = loadGlobalSettings;
 module.exports.saveSettings = saveGlobalSettings;
