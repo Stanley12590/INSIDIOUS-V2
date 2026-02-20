@@ -44,7 +44,7 @@ module.exports = {
             manual += `│ ${prefix}settings set <feature> <value>\n`;
             manual += `│ Features: warnLimit, maxTags, inactiveDays, antiSpamLimit,\n`;
             manual += `│           antiSpamInterval, sleepingStart, sleepingEnd,\n`;
-            manual += `│           maxCoOwners, autoStatusLimit, autoDeleteTimeout\n`;
+            manual += `│           maxCoOwners, statusReplyLimit, autoExpireMinutes\n`;
             manual += `│ Example: ${prefix}settings set warnLimit 5\n`;
             manual += `│ Example: ${prefix}settings set sleepingStart 22:00\n`;
             manual += `└───────────────\n\n`;
@@ -67,11 +67,11 @@ module.exports = {
             manual += `*⚙️ OTHER SETTINGS*\n`;
             manual += `┌───────────────\n`;
             manual += `│ autoDeleteMessages: ${settings.autoDeleteMessages ? '✅' : '❌'}\n`;
-            manual += `│ autoDeleteTimeout: ${settings.autoDeleteTimeout}ms\n`;
-            manual += `│ autoStatusActions: ${settings.autoStatusActions?.join(', ') || 'view,react,reply'}\n`;
+            manual += `│ autoExpireMinutes : ${settings.autoExpireMinutes}ms\n`;
+            manual += `│ autoStatusActions : ${settings.autoStatusActions?.join(', ') || 'view,react,reply'}\n`;
             manual += `│\n`;
             manual += `│ ${prefix}settings autodelete on/off\n`;
-            manual += `│ ${prefix}settings set autoDeleteTimeout <ms>\n`;
+            manual += `│ ${prefix}settings set autoExpireMinutes <minutes>\n`;
             manual += `│ ${prefix}settings statusactions <view/react/reply> ...\n`;
             manual += `│ ${prefix}settings mode public/self\n`;
             manual += `│ ${prefix}settings prefix <new>\n`;
@@ -118,8 +118,9 @@ module.exports = {
             text += `│ autoTyping     : ${settings.autoTyping ? '✅' : '❌'}\n`;
             text += `│ autoRecording  : ${settings.autoRecording ? '✅' : '❌'}\n`;
             text += `│ autoBio        : ${settings.autoBio ? '✅' : '❌'}\n`;
-            text += `│ autostatus     : ${settings.autostatus ? '✅' : '❌'} (limit: ${settings.autoStatusLimit}/day)\n`;
+            text += `│ autostatus     : ${settings.autostatus ? '✅' : '❌'} (limit: ${settings.statusReplyLimit}/day)\n`;
             text += `│ downloadStatus : ${settings.downloadStatus ? '✅' : '❌'}\n`;
+            text += `│ autoDeleteMessages: ${settings.autoDeleteMessages ? '✅' : '❌'}\n`;
             text += `└───────────\n\n`;
 
             text += `🤖 *CHATBOT*\n`;
@@ -144,22 +145,15 @@ module.exports = {
             text += `│ sleepingStart  : ${settings.sleepingStart}\n`;
             text += `│ sleepingEnd    : ${settings.sleepingEnd}\n`;
             text += `│ maxCoOwners    : ${settings.maxCoOwners}\n`;
-            text += `│ autoStatusLimit: ${settings.autoStatusLimit}\n`;
+            text += `│ statusReplyLimit: ${settings.statusReplyLimit}\n`;
+            text += `│ autoExpireMinutes: ${settings.autoExpireMinutes}\n`;
             text += `└───────────\n\n`;
 
             text += `🔐 *MODE & PREFIX*\n`;
             text += `┌───────────\n`;
             text += `│ mode           : ${settings.mode}\n`;
             text += `│ prefix         : ${settings.prefix}\n`;
-            text += `│ alwaysOnline   : ${settings.alwaysOnline ? '✅' : '❌'}\n`;
             text += `│ withoutPrefix  : ${settings.commandWithoutPrefix ? '✅' : '❌'}\n`;
-            text += `└───────────\n\n`;
-
-            text += `⚙️ *OTHER SETTINGS*\n`;
-            text += `┌───────────\n`;
-            text += `│ autoDeleteMessages: ${settings.autoDeleteMessages ? '✅' : '❌'}\n`;
-            text += `│ autoDeleteTimeout : ${settings.autoDeleteTimeout}ms\n`;
-            text += `│ autoStatusActions : ${settings.autoStatusActions?.join(', ') || 'view,react,reply'}\n`;
             text += `└───────────\n\n`;
 
             text += `📋 *ARRAY SETTINGS*\n`;
@@ -317,7 +311,6 @@ module.exports = {
         }
 
         // ----- TOGGLE BOOLEAN (with optional scope) -----
-        // Map aliases to actual feature names
         const featureMap = {
             'antilink': 'antilink',
             'antiporn': 'antiporn',
@@ -340,7 +333,6 @@ module.exports = {
             'welcomegoodbye': 'welcomeGoodbye',
             'activemembers': 'activemembers',
             'autoblockcountry': 'autoblockCountry',
-            'alwaysonline': 'alwaysOnline',
             'autodeletemessages': 'autoDeleteMessages'
         };
 
