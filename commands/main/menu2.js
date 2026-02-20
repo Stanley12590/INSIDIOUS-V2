@@ -4,11 +4,14 @@
  * 🥀 LOGO FIX: BUFFERED THUMBNAIL (LARGE)
  */
 
-const { doc, getDoc } = require('firebase/firestore');
-const axios = require('axios');
+const fs = require('fs-extra');
+const path = require('path');
+const config = require('../../config');
+const { fancy, runtime } = require('../../lib/tools');
+const { generateWAMessageFromContent, prepareWAMessageMedia } = require('@whiskeysockets/baileys');
 
 module.exports = {
-    name: 'menu',
+    name: 'menu2',
     async execute(m, sock, commands, args, db, forwardedContext) {
         const from = m.key.remoteJid;
         const pushName = m.pushName || "ꜱᴜʙꜱᴄʀɪʙᴇʀ";
