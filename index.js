@@ -1,5 +1,5 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const mongoose = require("mongoose");
 const path = require("path");
@@ -118,7 +118,7 @@ async function deleteSessionFromMongoDB(number) {
     }
 }
 
-// ✅ **MAIN BOT FUNCTION – HAKUNA AUTO-RECONNECT**
+// ✅ **MAIN BOT FUNCTION – HAKUNA CONNECTION CLOSE LOGIC**
 async function startBot() {
     try {
         console.log(fancy("🚀 Starting INSIDIOUS..."));
@@ -162,8 +162,9 @@ async function startBot() {
             currentBotNumber = conn.user.id.split(':')[0];
         }
 
+        // ✅ TUNAENDELEA KUSHUGHULIKIA 'open' TU – HAKUNA LOGIC YA 'close'
         conn.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect } = update;
+            const { connection } = update;
             
             if (connection === 'open') {
                 console.log(fancy("👹 INSIDIOUS: THE LAST KEY ACTIVATED"));
@@ -225,18 +226,7 @@ async function startBot() {
                     } catch (e) {}
                 }, 3000);
             }
-            
-            if (connection === 'close') {
-                console.log(fancy("🔌 Main bot connection closed"));
-                isConnected = false;
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-                
-                if (statusCode === DisconnectReason.loggedOut) {
-                    console.log(fancy("🚫 Logged out. Removing session from MongoDB."));
-                    await deleteSessionFromMongoDB('insidious_main');
-                }
-                // HAKUNA AUTO-RECONNECT – PLATFORM ITASHUGHULIKIA
-            }
+            // HAKUNA SEHEMU YA 'close' – TUNACHO KUFANYA
         });
 
         conn.ev.on('creds.update', async () => {
