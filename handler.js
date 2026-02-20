@@ -119,7 +119,7 @@ let globalSettings = { ...DEFAULT_SETTINGS };
 let groupSettings = new Map();
 let pairedNumbers = new Set();
 let botSecretId = null;
-let currentBotNumber = null; // This will store the bot's own number
+let currentBotNumber = null;
 
 const messageStore = new Map();
 const spamTracker = new Map();
@@ -167,6 +167,20 @@ async function saveGroupSettings() {
             await Group.findOneAndUpdate({ jid }, { settings, updatedAt: new Date() }, { upsert: true });
         }
     } catch (e) { console.error('Error saving group settings:', e); }
+}
+
+// Group setting helpers – defined BEFORE exports
+function getGroupSetting(groupJid, key) {
+    if (!groupJid || groupJid === 'global') return globalSettings[key];
+    const gs = groupSettings.get(groupJid) || {};
+    return gs[key] !== undefined ? gs[key] : globalSettings[key];
+}
+
+async function setGroupSetting(groupJid, key, value) {
+    const gs = groupSettings.get(groupJid) || {};
+    gs[key] = value;
+    groupSettings.set(groupJid, gs);
+    await saveGroupSettings();
 }
 
 async function loadPairedNumbers() {
@@ -564,7 +578,6 @@ async function handleAutoStatus(conn, statusMsg) {
 
 // ==================== DEEP AI RESPONSE – ULTIMATE PROMPT (STANYTZ BIO) ====================
 async function getDeepAIResponse(text, isStatus = false) {
-    // Ultimate system prompt with full developer bio
     const systemPrompt = `You are INSIDIOUS AI, an advanced WhatsApp bot with a rich personality and deep intelligence.
 You were created by STANYTZ, whose full name is Stanley Assanaly, a 23-year-old developer from Tanzania.
 Stanley (STANYTZ) built you in 2025 and updated you in 2026. Your current version is 2.1.1.
@@ -586,7 +599,6 @@ Now, respond to this message: "${text}"`;
         return reply || "I'm here! How can I help you today?";
     } catch (error) {
         console.error('AI Error:', error.message);
-        // No fallback – return a strong message
         return "I'm having a moment, but I'm still here. Ask me again?";
     }
 }
@@ -632,7 +644,6 @@ async function handleChatbot(conn, msg, from, body, sender, pushname) {
 
     await conn.sendPresenceUpdate('composing', from);
     try {
-        // Pass pushname to AI for personalization
         const personalizedBody = pushname ? `${pushname} says: ${body}` : body;
         const aiResponse = await getDeepAIResponse(personalizedBody, false);
         await conn.sendMessage(from, {
@@ -891,7 +902,6 @@ module.exports = async (conn, m) => {
         await loadGroupSettings();
         await loadPairedNumbers();
 
-        // Store bot's own number if not already set
         if (!currentBotNumber && conn.user && conn.user.id) {
             currentBotNumber = conn.user.id.split(':')[0];
         }
@@ -1066,7 +1076,6 @@ module.exports.init = async (conn) => {
     await loadGroupSettings();
     initSleepingMode(conn);
 
-    // Store bot's own number
     if (conn.user && conn.user.id) {
         currentBotNumber = conn.user.id.split(':')[0];
     }
@@ -1096,7 +1105,7 @@ module.exports.init = async (conn) => {
 // ==================== EXPORTS ====================
 module.exports.loadGlobalSettings = loadGlobalSettings;
 module.exports.saveGlobalSettings = saveGlobalSettings;
-module.exports.getGroupSetting = getGroupSetting;
+module.exports.getGroupSetting = getGroupSetting;  // <-- DEFINED
 module.exports.setGroupSetting = setGroupSetting;
 module.exports.loadSettings = loadGlobalSettings;
 module.exports.saveSettings = saveGlobalSettings;
