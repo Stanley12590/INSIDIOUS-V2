@@ -118,7 +118,7 @@ async function deleteSessionFromMongoDB(number) {
     }
 }
 
-// ✅ **MAIN BOT FUNCTION (SINGLE BOT, NO AUTO-RECONNECT)**
+// ✅ **MAIN BOT FUNCTION – HAKUNA AUTO-RECONNECT**
 async function startBot() {
     try {
         console.log(fancy("🚀 Starting INSIDIOUS..."));
@@ -157,6 +157,7 @@ async function startBot() {
         globalConn = conn;
         botStartTime = Date.now();
 
+        // Store bot's own number
         if (conn.user && conn.user.id) {
             currentBotNumber = conn.user.id.split(':')[0];
         }
@@ -234,7 +235,7 @@ async function startBot() {
                     console.log(fancy("🚫 Logged out. Removing session from MongoDB."));
                     await deleteSessionFromMongoDB('insidious_main');
                 }
-                // NO AUTO-RECONNECT – PLATFORM ITARE
+                // HAKUNA AUTO-RECONNECT – PLATFORM ITASHUGHULIKIA
             }
         });
 
@@ -294,11 +295,11 @@ async function startBot() {
             }
         });
 
-        console.log(fancy("🚀 Main bot ready"));
+        console.log(fancy("🚀 Main bot ready – akanza tu, haijirestart"));
         
     } catch (error) {
         console.error("Start error:", error.message);
-        // Hakuna auto-restart – platform itashughulikia
+        // HAKUNA AUTO-RESTART – PLATFORM ITASHUGHULIKIA
     }
 }
 
@@ -367,14 +368,37 @@ app.get('/botinfo', (req, res) => {
     res.json({
         connected: true,
         botName: globalConn.user?.name,
-        botNumber: globalConn.user?.id?.split(':')[0]
+        botNumber: globalConn.user?.id?.split(':')[0],
+        botSecret: handler.getBotId ? handler.getBotId() : 'Unknown',
+        pairedOwners: handler.getPairedNumbers ? handler.getPairedNumbers().length : 0
     });
+});
+
+// ✅ **GET ALL USERS**
+app.get('/users', async (req, res) => {
+    try {
+        const users = await User.find().sort({ lastActive: -1 }).limit(100);
+        res.json({ success: true, count: users.length, users });
+    } catch (error) {
+        res.json({ success: false, error: error.message });
+    }
+});
+
+// ✅ **GET ALL GROUPS**
+app.get('/groups', async (req, res) => {
+    try {
+        const groups = await Group.find().sort({ joinedAt: -1 });
+        res.json({ success: true, count: groups.length, groups });
+    } catch (error) {
+        res.json({ success: false, error: error.message });
+    }
 });
 
 // ✅ **START SERVER**
 app.listen(PORT, () => {
     console.log(fancy(`🌐 Server running on port ${PORT}`));
     console.log(fancy(`👑 Developer: STANYTZ (Stanley Assanaly, 23 yrs)`));
+    console.log(fancy(`🔗 Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
 });
 
 module.exports = app;
