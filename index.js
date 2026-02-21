@@ -12,210 +12,169 @@ const pino = require("pino");
 const mongoose = require("mongoose");
 const path = require("path");
 const fs = require('fs');
-const { Session } = require('./database/models'); // Your Session model
+const { Session } = require('./database/models'); 
 const handler = require('./handler');
 
-// ✅ FANCY TEXT FUNCTION
+const app = express();
+const PORT = process.env.PORT || 3000;
+const activeSockets = {}; 
+
+// ✅ FANCY FUNCTION
 function fancy(text) {
     if (!text || typeof text !== 'string') return text;
     const map = {
         a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ',
         j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ',
-        s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ',
-        A: 'ᴀ', B: 'ʙ', C: 'ᴄ', D: 'ᴅ', E: 'ᴇ', F: 'ꜰ', G: 'ɢ', H: 'ʜ', I: 'ɪ',
-        J: 'ᴊ', K: 'ᴋ', L: 'ʟ', M: 'ᴍ', N: 'ɴ', O: 'ᴏ', P: 'ᴘ', Q: 'ǫ', R: 'ʀ',
-        S: 'ꜱ', T: 'ᴛ', U: 'ᴜ', V: 'ᴠ', W: 'ᴡ', X: 'x', Y: 'ʏ', Z: 'ᴢ'
+        s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ'
     };
-    return text.split('').map(c => map[c] || c).join('');
+    return text.split('').map(c => map[c.toLowerCase()] || c).join('');
 }
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-const activeSockets = {}; // Tracks live bots
 
 // ✅ MONGODB CONNECTION
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
 
-mongoose.connect(MONGODB_URI, {
-    serverSelectionTimeoutMS: 30000,
-    socketTimeoutMS: 45000,
-})
+mongoose.connect(MONGODB_URI)
 .then(() => {
     console.log(fancy("✅ MongoDB Connected"));
-    restoreAllSessions(); // 🔥 Auto-restore all sessions on server start
+    restoreSessions(); // 🔥 STEP 1: RESTORE SESSIONS ON STARTUP
 })
-.catch((err) => {
-    console.log(fancy("❌ MongoDB Connection FAILED: " + err.message));
-});
+.catch(err => console.log("MongoDB Error: " + err.message));
 
 app.use(express.json());
 
-// ==================== CORE BOT ENGINE ====================
+// ==================== SESSION MANAGEMENT ====================
 
 async function startBot(sessionId, savedCreds = null) {
-    try {
-        const sessionDir = path.join(__dirname, 'sessions', sessionId);
-        if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
+    const sessionDir = path.join(__dirname, 'sessions', sessionId);
+    if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
 
-        // If restoring from DB, write creds to file
-        if (savedCreds) {
-            fs.writeFileSync(path.join(sessionDir, 'creds.json'), JSON.stringify(savedCreds));
+    // 🔥 Essential for Railway: Restore creds from DB to Disk
+    if (savedCreds) {
+        fs.writeFileSync(path.join(sessionDir, 'creds.json'), JSON.stringify(savedCreds));
+    }
+
+    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+    const { version } = await fetchLatestBaileysVersion();
+
+    const conn = makeWASocket({
+        version,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }))
+        },
+        logger: pino({ level: "silent" }),
+        browser: Browsers.ubuntu("Chrome"), // Stable for Railway
+        syncFullHistory: false,
+        markOnlineOnConnect: true
+    });
+
+    activeSockets[sessionId] = conn;
+
+    conn.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect } = update;
+
+        if (connection === 'open') {
+            console.log(fancy(`✅ Connected: ${sessionId}`));
+            await Session.findOneAndUpdate({ sessionId }, { isActive: true }, { upsert: true });
         }
 
-        const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-        const { version } = await fetchLatestBaileysVersion();
-
-        const conn = makeWASocket({
-            version,
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }))
-            },
-            logger: pino({ level: "silent" }),
-            browser: Browsers.macOS("Safari"),
-            markOnlineOnConnect: true,
-            syncFullHistory: false
-        });
-
-        activeSockets[sessionId] = conn;
-
-        conn.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect } = update;
-
-            if (connection === 'open') {
-                console.log(fancy(`✅ Bot Online: ${sessionId}`));
-                await Session.findOneAndUpdate({ sessionId }, { isActive: true }, { upsert: true });
-                
-                if (handler && typeof handler.init === 'function') {
-                    await handler.init(conn);
-                }
+        if (connection === 'close') {
+            const reason = lastDisconnect?.error?.output?.statusCode;
+            delete activeSockets[sessionId];
+            
+            if (reason === DisconnectReason.loggedOut) {
+                console.log(fancy(`❌ Logged out: ${sessionId}`));
+                await Session.deleteOne({ sessionId });
+                if (fs.existsSync(sessionDir)) fs.rmSync(sessionDir, { recursive: true });
             }
+        }
+    });
 
-            if (connection === 'close') {
-                const reason = lastDisconnect?.error?.output?.statusCode;
-                console.log(fancy(`🔌 Connection closed for ${sessionId}. Reason: ${reason}`));
-                
-                delete activeSockets[sessionId];
+    conn.ev.on('creds.update', async () => {
+        await saveCreds();
+        const creds = JSON.parse(fs.readFileSync(path.join(sessionDir, 'creds.json')));
+        await Session.findOneAndUpdate({ sessionId }, { creds, isActive: true }, { upsert: true });
+    });
 
-                if (reason === DisconnectReason.loggedOut) {
-                    await Session.deleteOne({ sessionId });
-                    if (fs.existsSync(sessionDir)) fs.rmSync(sessionDir, { recursive: true });
-                }
-                // Note: No auto-reconnect loop here. 
-                // It will restore only when the server restarts or re-paired.
-            }
-        });
-
-        conn.ev.on('creds.update', async () => {
-            await saveCreds();
-            const latestCreds = JSON.parse(fs.readFileSync(path.join(sessionDir, 'creds.json')));
-            await Session.findOneAndUpdate({ sessionId }, { creds: latestCreds, isActive: true }, { upsert: true });
-        });
-
-        conn.ev.on('messages.upsert', async (m) => {
-            if (handler) await handler(conn, m);
-        });
-
-    } catch (e) {
-        console.error(`Error starting session ${sessionId}:`, e.message);
-    }
+    conn.ev.on('messages.upsert', async (m) => {
+        if (handler) await handler(conn, m);
+    });
 }
 
-// ✅ RESTORE ALL SESSIONS FROM DATABASE
-async function restoreAllSessions() {
-    console.log(fancy("📂 Restoring active sessions from MongoDB..."));
+// 🔥 FUNCTION TO RESTORE ALL BOTS WHEN SERVER REBOOTS
+async function restoreSessions() {
     try {
-        const sessions = await Session.find({ isActive: true });
-        for (const s of sessions) {
+        const savedSessions = await Session.find({ isActive: true });
+        console.log(fancy(`🔄 Restoring ${savedSessions.length} sessions...`));
+        for (const s of savedSessions) {
             await startBot(s.sessionId, s.creds);
-            await delay(3000); // Prevent startup overload
+            await delay(5000); // Prevent Railway from crashing due to high CPU
         }
-        console.log(fancy(`✅ Restored ${sessions.length} sessions.`));
     } catch (e) {
-        console.error("Restore failed:", e.message);
+        console.log("Restore error: " + e.message);
     }
 }
 
-// ==================== HTTP ENDPOINTS ====================
+// ==================== PAIRING ROUTE (FIXED) ====================
 
-// ✅ FIXED PAIRING ENDPOINT (No more "Connection Closed")
 app.get('/pair', async (req, res) => {
-    const number = req.query.num;
-    if (!number) return res.json({ error: "Please provide a phone number." });
+    let num = req.query.num;
+    if (!num) return res.json({ error: "Example: /pair?num=255xxxx" });
 
-    const cleanNum = number.replace(/[^0-9]/g, '');
+    const cleanNum = num.replace(/[^0-9]/g, '');
+    // Unique ID to prevent "Connection Closed" conflicts
+    const pairId = `pair_${Date.now()}`; 
+    const pairPath = path.join(__dirname, 'sessions', pairId);
     
-    // Create a totally unique ID for this pairing attempt to avoid conflicts
-    const tempSessionId = `pair_${cleanNum}_${Date.now()}`;
-    const tempPath = path.join(__dirname, 'sessions', tempSessionId);
-    if (!fs.existsSync(tempPath)) fs.mkdirSync(tempPath, { recursive: true });
+    if (!fs.existsSync(pairPath)) fs.mkdirSync(pairPath, { recursive: true });
 
     try {
-        const { state, saveCreds } = await useMultiFileAuthState(tempPath);
+        const { state, saveCreds } = await useMultiFileAuthState(pairPath);
         const { version } = await fetchLatestBaileysVersion();
 
         const tempConn = makeWASocket({
             version,
             auth: state,
             logger: pino({ level: "silent" }),
-            browser: Browsers.macOS("Safari")
+            browser: Browsers.ubuntu("Chrome")
         });
 
-        // Use a timeout to ensure socket is ready before asking for code
-        let codeSent = false;
-        
-        tempConn.ev.on('connection.update', async (update) => {
-            const { connection } = update;
-
-            if (!codeSent) {
-                await delay(5000); // Wait for socket to stabilize
-                try {
-                    const code = await tempConn.requestPairingCode(cleanNum);
-                    codeSent = true;
-                    res.json({ success: true, code });
-                } catch (pairErr) {
-                    if (!res.headersSent) res.json({ error: "Pairing failed: " + pairErr.message });
-                }
+        // 🔥 FIX: Wait for the socket to stabilize before asking for code
+        setTimeout(async () => {
+            try {
+                const code = await tempConn.requestPairingCode(cleanNum);
+                if (!res.headersSent) res.json({ success: true, code });
+            } catch (err) {
+                if (!res.headersSent) res.json({ error: "Failed to generate code. Try again." });
             }
-
-            if (connection === 'open') {
-                const finalId = tempConn.user.id.split(':')[0];
-                console.log(fancy(`✅ New Pairing Successful: ${finalId}`));
-
-                // Move temp creds to permanent DB
-                const creds = JSON.parse(fs.readFileSync(path.join(tempPath, 'creds.json')));
-                await Session.findOneAndUpdate({ sessionId: finalId }, { creds, isActive: true }, { upsert: true });
-
-                // Start the actual bot session
-                startBot(finalId, creds);
-
-                // Cleanup temp folder
-                setTimeout(() => {
-                    if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { recursive: true });
-                }, 10000);
-            }
-        });
+        }, 8000); // 8 seconds delay ensures connection is ready
 
         tempConn.ev.on('creds.update', saveCreds);
+        tempConn.ev.on('connection.update', async (update) => {
+            if (update.connection === 'open') {
+                const botId = tempConn.user.id.split(':')[0];
+                const creds = JSON.parse(fs.readFileSync(path.join(pairPath, 'creds.json')));
+                
+                // Save to permanent DB
+                await Session.findOneAndUpdate({ sessionId: botId }, { creds, isActive: true }, { upsert: true });
+                
+                // Start the actual bot
+                startBot(botId, creds);
+                
+                // Cleanup temp pairing files
+                setTimeout(() => fs.rmSync(pairPath, { recursive: true }), 5000);
+            }
+        });
 
     } catch (e) {
-        if (!res.headersSent) res.json({ error: "System Error: " + e.message });
+        if (!res.headersSent) res.json({ error: "Server busy" });
     }
 });
 
-// ✅ STATUS CHECK
-app.get('/status', (req, res) => {
-    res.json({
-        uptime: process.uptime(),
-        online_bots: Object.keys(activeSockets).length,
-        mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
-    });
-});
+// ==================== START SERVER ====================
 
-// START SERVER
-app.listen(PORT, () => {
-    console.log(fancy(`🌐 Server running on http://localhost:${PORT}`));
-    console.log(fancy(`🔗 Link Account: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
-});
+app.get('/', (req, res) => res.send("Insidious Bot Manager Running"));
 
-module.exports = app;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(fancy(`🌐 Server Online on Port ${PORT}`));
+});
