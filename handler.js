@@ -30,6 +30,7 @@ function formatMessage(text) {
     const topBorder = '╭─── • 🥀 • ───╮\n';
     const bottomBorder = '\n╰─── • 🥀 • ───╯';
     return topBorder + fancy(text) + bottomBorder;
+    return bottomBorder + fancy(text) + bottomBorder;
 }
 
 function runtime(seconds) {
