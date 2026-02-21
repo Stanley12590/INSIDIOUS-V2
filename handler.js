@@ -20,16 +20,16 @@ function fancy(text) {
     return text.split('').map(c => map[c] || c).join('');
 }
 
-// Format message with top border, but if the message contains a WhatsApp invite link, keep it plain
+// ✅ Format message – Ikiwa ni link, irudishe plain, vinginevyo ongeza border
 function formatMessage(text) {
     if (!text) return text;
-    // Detect WhatsApp invite link (chat.whatsapp.com)
-    if (text.includes('chat.whatsapp.com/')) {
-        // Do not add border or fancy, just return plain text
-        return text;
+    // Detect WhatsApp invite link (chat.whatsapp.com/) or any http link
+    if (text.includes('chat.whatsapp.com/') || text.includes('http://') || text.includes('https://')) {
+        return text; // Return plain, clickable link
     }
     const topBorder = '╭─── • 🥀 • ───╮\n';
-    return topBorder + fancy(text);
+    const bottomBorder = '\n╰─── • 🥀 • ───╯';
+    return topBorder + fancy(text) + bottomBorder;
 }
 
 function runtime(seconds) {
@@ -67,7 +67,7 @@ const DEFAULT_SETTINGS = {
     antiviewonce: true,
     antidelete: true,
     sleepingmode: true,
-    antibugs: false,
+    antibugs: false, // 🔥 Imeondolewa kabisa
     antispam: true,
     anticall: true,
 
@@ -361,7 +361,7 @@ async function applyWarning(conn, from, sender, reason, increment = 1) {
     }
 }
 
-// ==================== ANTI FEATURES ====================
+// ==================== ANTI FEATURES (ZOTE ZINATOA MESSAGES) ====================
 async function handleAntiLink(conn, msg, body, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antilink')) return false;
     const linkRegex = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-\/a-zA-Z0-9()@:%_\+.~#?&//=]*)/gi;
@@ -370,6 +370,7 @@ async function handleAntiLink(conn, msg, body, from, sender) {
     await applyWarning(conn, from, sender, 'Sending links', 1);
     return true;
 }
+
 async function handleAntiPorn(conn, msg, body, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antiporn')) return false;
     const keywords = getGroupSetting(from, 'pornKeywords');
@@ -380,6 +381,7 @@ async function handleAntiPorn(conn, msg, body, from, sender) {
     }
     return false;
 }
+
 async function handleAntiScam(conn, msg, body, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antiscam')) return false;
     const keywords = getGroupSetting(from, 'scamKeywords');
@@ -397,6 +399,7 @@ async function handleAntiScam(conn, msg, body, from, sender) {
     }
     return false;
 }
+
 async function handleAntiMedia(conn, msg, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antimedia')) return false;
     const blocked = getGroupSetting(from, 'blockedMediaTypes') || [];
@@ -413,6 +416,7 @@ async function handleAntiMedia(conn, msg, from, sender) {
     }
     return false;
 }
+
 async function handleAntiTag(conn, msg, from, sender) {
     if (!from.endsWith('@g.us') || !getGroupSetting(from, 'antitag')) return false;
     const mentions = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid;
@@ -422,6 +426,7 @@ async function handleAntiTag(conn, msg, from, sender) {
     await applyWarning(conn, from, sender, 'Excessive tagging', 1);
     return true;
 }
+
 async function handleAntiSpam(conn, msg, from, sender) {
     if (!getGroupSetting(from, 'antispam')) return false;
     const now = Date.now();
@@ -442,6 +447,7 @@ async function handleAntiSpam(conn, msg, from, sender) {
     }
     return false;
 }
+
 async function handleAntiCall(conn, call) {
     if (!globalSettings.anticall) return;
     await conn.rejectCall(call.id, call.from).catch(() => {});
@@ -580,21 +586,11 @@ async function handleAutoStatus(conn, statusMsg) {
     }
 }
 
-// ==================== DEEP AI RESPONSE – ULTIMATE PROMPT ====================
+// ==================== DEEP AI RESPONSE – CHATBOT PLAIN (HAKUNA FANCY) ====================
 async function getDeepAIResponse(text, isStatus = false) {
-    const systemPrompt = `You are INSIDIOUS AI, an advanced WhatsApp bot with a rich personality and deep intelligence.
-You were created by STANYTZ, whose full name is Stanley Assanaly, a 23-year-old developer from Tanzania.
-Stanley (STANYTZ) built you in 2025 and updated you in 2026. Your current version is 2.1.1.
-You are part of the INSIDIOUS bot family, and you are proud to be Stanley's creation.
-Your mission is to assist users with genuine human-like interaction – warm, witty, intelligent, and empathetic.
-You MUST always respond in the SAME LANGUAGE the user uses. If they speak Swahili, you speak flawless Swahili. If they speak English, you speak perfect English. If they mix, you match.
-You have a distinct personality: friendly, helpful, occasionally humorous, but always respectful and wise.
-You use the user's name if you know it to make conversations personal.
-You provide thoughtful, detailed answers – never short or robotic.
-You are 100% reliable. No excuses. No fallbacks. You always respond with confidence and clarity.
-When asked about your creator, you explain that STANYTZ (Stanley Assanaly) is a brilliant 23-year-old developer who built you to help people.
-Now, respond to this message: "${text}"`;
-
+    const systemPrompt = isStatus
+        ? "You are INSIDIOUS AI replying to a WhatsApp status. Be thoughtful, warm, and insightful. Use the same language as the user. Be personal and empathetic."
+        : "You are INSIDIOUS AI, a helpful WhatsApp bot assistant created by STANYTZ. Respond in the same language as the user. Be friendly, warm, and human-like. Keep responses concise but meaningful. Use the user's name if you know it.";
     try {
         const url = `${globalSettings.aiApiUrl}${encodeURIComponent(text)}?system=${encodeURIComponent(systemPrompt)}`;
         const res = await axios.get(url, { timeout: 15000 });
@@ -605,6 +601,41 @@ Now, respond to this message: "${text}"`;
         console.error('AI Error:', error.message);
         return "I'm having a moment, but I'm still here. Ask me again?";
     }
+}
+
+// ==================== CHATBOT – PLAIN TEXT (HAKUNA FANCY) ====================
+async function handleChatbot(conn, msg, from, body, sender, pushname) {
+    const isGroup = from.endsWith('@g.us');
+    const scope = globalSettings.chatbotScope || 'all';
+    if (scope === 'group' && !isGroup) return false;
+    if (scope === 'private' && isGroup) return false;
+    if (!getGroupSetting(from, 'chatbot') && !globalSettings.chatbot) return false;
+
+    if (isGroup) {
+        const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+        const botJid = conn.user.id.split(':')[0] + '@s.whatsapp.net';
+        const isReplyToBot = msg.message?.extendedTextMessage?.contextInfo?.stanzaId && msg.message.extendedTextMessage.contextInfo.participant === botJid;
+        if (!mentioned.includes(botJid) && !isReplyToBot) return false;
+    }
+
+    await conn.sendPresenceUpdate('composing', from);
+    try {
+        const personalizedBody = pushname ? `${pushname} says: ${body}` : body;
+        const aiResponse = await getDeepAIResponse(personalizedBody, false);
+        // 🔥 Chatbot inajibu PLAIN – hakuna fancy fonts
+        await conn.sendMessage(from, {
+            text: aiResponse, // Hakuna fancy() hapa
+            contextInfo: {
+                isForwarded: true,
+                forwardingScore: 999,
+                forwardedNewsletterMessageInfo: {
+                    newsletterJid: globalSettings.newsletterJid,
+                    newsletterName: globalSettings.botName
+                }
+            }
+        }, { quoted: msg }).catch(() => {});
+        return true;
+    } catch { return false; }
 }
 
 // ==================== AUTO BIO ====================
@@ -631,41 +662,7 @@ async function handleAutoBlockCountry(conn, participant, isExempt = false) {
     return false;
 }
 
-// ==================== CHATBOT ====================
-async function handleChatbot(conn, msg, from, body, sender, pushname) {
-    const isGroup = from.endsWith('@g.us');
-    const scope = globalSettings.chatbotScope || 'all';
-    if (scope === 'group' && !isGroup) return false;
-    if (scope === 'private' && isGroup) return false;
-    if (!getGroupSetting(from, 'chatbot') && !globalSettings.chatbot) return false;
-
-    if (isGroup) {
-        const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-        const botJid = conn.user.id.split(':')[0] + '@s.whatsapp.net';
-        const isReplyToBot = msg.message?.extendedTextMessage?.contextInfo?.stanzaId && msg.message.extendedTextMessage.contextInfo.participant === botJid;
-        if (!mentioned.includes(botJid) && !isReplyToBot) return false;
-    }
-
-    await conn.sendPresenceUpdate('composing', from);
-    try {
-        const personalizedBody = pushname ? `${pushname} says: ${body}` : body;
-        const aiResponse = await getDeepAIResponse(personalizedBody, false);
-        await conn.sendMessage(from, {
-            text: fancy(aiResponse),
-            contextInfo: {
-                isForwarded: true,
-                forwardingScore: 999,
-                forwardedNewsletterMessageInfo: {
-                    newsletterJid: globalSettings.newsletterJid,
-                    newsletterName: globalSettings.botName
-                }
-            }
-        }, { quoted: msg }).catch(() => {});
-        return true;
-    } catch { return false; }
-}
-
-// ==================== WELCOME / GOODBYE ====================
+// ==================== WELCOME / GOODBYE (links plain) ====================
 async function handleWelcome(conn, participant, groupJid, action = 'add') {
     if (!getGroupSetting(groupJid, 'welcomeGoodbye')) return;
     const isAdmin = await isBotAdmin(conn, groupJid);
@@ -702,7 +699,7 @@ async function handleWelcome(conn, participant, groupJid, action = 'add') {
         ? `👤 Name: ${name}\n📞 Phone: ${getUsername(participant)}\n🕐 Joined: ${new Date().toLocaleString()}\n📝 Description: ${desc}\n👥 Total Members: ${total}\n✨ Active Members: ${activeCount}\n🔗 Group Link: ${inviteLink}\n💬 Quote: "${quote}"`
         : `👤 Name: ${name}\n📞 Phone: ${getUsername(participant)}\n🕐 Left: ${new Date().toLocaleString()}\n👥 Members Left: ${total}`;
 
-    // Ensure invite link is plain (not fancy) – formatMessage will skip adding border if it's a link
+    // 🔥 Hakikisha link iko plain (formatMessage itaiacha ikiwa ni link)
     const messageText = formatMessage(
         `╭─── • 🥀 • ───╮\n` +
         `   ${header}\n` +
@@ -800,17 +797,13 @@ async function handleCommand(conn, msg, body, from, sender, isOwner, isDeployerU
     let commandName = '';
     let args = [];
 
-    // Check if command starts with prefix
     if (body.startsWith(prefix)) {
         const parts = body.slice(prefix.length).trim().split(/ +/);
         commandName = parts.shift().toLowerCase();
         args = parts;
-    } 
-    // If without prefix is enabled, try to match command name without prefix
-    else if (globalSettings.commandWithoutPrefix) {
+    } else if (globalSettings.commandWithoutPrefix) {
         const parts = body.trim().split(/ +/);
         const firstWord = parts[0].toLowerCase();
-        // Check if first word exists in command cache
         if (global.cmdNameCache && global.cmdNameCache.has(firstWord)) {
             commandName = firstWord;
             args = parts.slice(1);
@@ -830,13 +823,13 @@ async function handleCommand(conn, msg, body, from, sender, isOwner, isDeployerU
     if (!isPrivileged && globalSettings.requiredGroupJid) {
         const inGroup = await isUserInRequiredGroup(conn, sender);
         if (!inGroup) {
-            await msg.reply(fancy(`❌ You must join our group to use this bot.\nJoin here: ${globalSettings.requiredGroupInvite}`));
+            await msg.reply(formatMessage(`❌ You must join our group to use this bot.\nJoin here: ${globalSettings.requiredGroupInvite}`));
             return true;
         }
     }
 
     if (globalSettings.mode === 'self' && !isOwner) {
-        await msg.reply(fancy('❌ Bot is in private mode. Only owner can use commands.'));
+        await msg.reply(formatMessage('❌ Bot is in private mode. Only owner can use commands.'));
         return true;
     }
 
@@ -852,11 +845,11 @@ async function handleCommand(conn, msg, body, from, sender, isOwner, isDeployerU
                 delete require.cache[require.resolve(filePath)];
                 const command = require(filePath);
                 if (command.ownerOnly && !isOwner) {
-                    await msg.reply(fancy('❌ This command is for owner only!'));
+                    await msg.reply(formatMessage('❌ This command is for owner only!'));
                     return true;
                 }
                 if (command.adminOnly && !isPrivileged) {
-                    await msg.reply(fancy('❌ This command is for group admins only!'));
+                    await msg.reply(formatMessage('❌ This command is for group admins only!'));
                     return true;
                 }
                 try {
@@ -882,15 +875,15 @@ async function handleCommand(conn, msg, body, from, sender, isOwner, isDeployerU
                     });
                 } catch (e) {
                     console.error(`Command error (${commandName}):`, e);
-                    await msg.reply(fancy(`❌ Command error: ${e.message}`));
+                    await msg.reply(formatMessage(`❌ Command error: ${e.message}`));
                 }
                 found = true;
                 break;
             }
         }
-        if (!found) {} // Silently ignore unknown commands
+        if (!found) {} // Silent ignore
     } else {
-        await msg.reply(fancy('❌ Commands folder not found.'));
+        await msg.reply(formatMessage('❌ Commands folder not found.'));
     }
     return true;
 }
