@@ -1,11 +1,18 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
+const { 
+    default: makeWASocket, 
+    useMultiFileAuthState, 
+    Browsers, 
+    makeCacheableSignalKeyStore, 
+    fetchLatestBaileysVersion, 
+    DisconnectReason,
+    delay 
+} = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const mongoose = require("mongoose");
 const path = require("path");
 const fs = require('fs');
-const { Session } = require('./database/models'); // 🔥 Session model
-
+const { Session } = require('./database/models'); // Your Session model
 const handler = require('./handler');
 
 // ✅ FANCY FUNCTION
@@ -16,25 +23,27 @@ function fancy(text) {
         j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ',
         s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ',
         A: 'ᴀ', B: 'ʙ', C: 'ᴄ', D: 'ᴅ', E: 'ᴇ', F: 'ꜰ', G: 'ɢ', H: 'ʜ', I: 'ɪ',
-        J: 'ᴊ', K: 'ᴋ', L: 'ʟ', M: 'ᴍ', N: 'ɴ', O: 'ᴏ', P: 'ᴘ', Q: 'ǫ', R: 'ʀ',
-        S: 'ꜱ', T: 'ᴛ', U: 'ᴜ', V: 'ᴠ', W: 'ᴡ', X: 'x', Y: 'ʏ', Z: 'ᴢ'
+        J: 'ᴊ', K: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ',
+        S: 'ꜱ', T: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ'
     };
     return text.split('').map(c => map[c] || c).join('');
 }
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const activeBots = {}; // Holds all live connections
 
 // ✅ MONGODB CONNECTION
-console.log(fancy("🔗 Connecting to MongoDB..."));
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
 
 mongoose.connect(MONGODB_URI, {
     serverSelectionTimeoutMS: 30000,
     socketTimeoutMS: 45000,
-    maxPoolSize: 10
 })
-.then(() => console.log(fancy("✅ MongoDB Connected")))
+.then(() => {
+    console.log(fancy("✅ MongoDB Connected"));
+    restoreSessions(); // 🔥 AUTO-RESTORE ALL SESSIONS ON STARTUP
+})
 .catch((err) => {
     console.log(fancy("❌ MongoDB Connection FAILED: " + err.message));
     process.exit(1);
@@ -43,88 +52,21 @@ mongoose.connect(MONGODB_URI, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-if (!fs.existsSync(path.join(__dirname, 'public'))) {
-    fs.mkdirSync(path.join(__dirname, 'public'), { recursive: true });
-}
+// ==================== CORE BOT LOGIC ====================
 
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
-
-let globalConn = null;
-let isConnected = false;
-let botStartTime = Date.now();
-
-let config = {};
-try {
-    config = require('./config');
-    console.log(fancy("📋 Config loaded"));
-} catch (error) {
-    console.log(fancy("❌ Config file error, using defaults"));
-    config = {
-        prefix: '.',
-        ownerNumber: ['255000000000'],
-        botName: 'INSIDIOUS',
-        workMode: 'public',
-        botImage: 'https://files.catbox.moe/f3c07u.jpg',
-        newsletterJid: '120363404317544295@newsletter'
-    };
-}
-
-// ==================== SESSION HELPERS (MongoDB) ====================
-async function saveSessionToMongoDB(number, creds, keys = {}) {
+async function startBot(sessionId, isExisting = true) {
     try {
-        const sanitizedNumber = number.replace(/[^0-9]/g, '');
-        await Session.findOneAndUpdate(
-            { sessionId: sanitizedNumber },
-            { 
-                $set: { 
-                    creds, 
-                    keys, 
-                    number: sanitizedNumber, 
-                    lastActive: new Date(), 
-                    isActive: true 
-                } 
-            },
-            { upsert: true, new: true }
-        );
-        return true;
-    } catch (error) {
-        console.error("Error saving session:", error.message);
-        return false;
-    }
-}
-
-async function loadSessionFromMongoDB(number) {
-    try {
-        const sanitizedNumber = number.replace(/[^0-9]/g, '');
-        const session = await Session.findOne({ sessionId: sanitizedNumber });
-        if (session && session.creds) {
-            return { creds: session.creds, keys: session.keys || {} };
-        }
-        return null;
-    } catch (error) {
-        console.error("Error loading session:", error.message);
-        return null;
-    }
-}
-
-// ==================== MAIN BOT – HAKUNA AUTO-RECONNECT ====================
-async function startBot() {
-    try {
-        console.log(fancy("🚀 Starting INSIDIOUS..."));
-        const botNumber = 'insidious_main';
-
-        const existingSession = await loadSessionFromMongoDB(botNumber);
-
-        const sessionPath = path.join(__dirname, 'insidious_session');
+        const sessionPath = path.join(__dirname, 'sessions', sessionId);
         if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
 
-        if (existingSession) {
-            console.log(fancy("📦 Loading session from MongoDB..."));
-            fs.writeFileSync(
-                path.join(sessionPath, 'creds.json'),
-                JSON.stringify(existingSession.creds, null, 2)
-            );
+        // If restoring from DB, write the creds file first
+        if (isExisting) {
+            const sessionData = await Session.findOne({ sessionId });
+            if (sessionData && sessionData.creds) {
+                fs.writeFileSync(path.join(sessionPath, 'creds.json'), JSON.stringify(sessionData.creds));
+            } else {
+                return; // Nothing to restore
+            }
         }
 
         const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
@@ -139,220 +81,146 @@ async function startBot() {
             logger: pino({ level: "silent" }),
             browser: Browsers.macOS("Safari"),
             syncFullHistory: false,
-            connectTimeoutMs: 60000,
-            keepAliveIntervalMs: 10000,
             markOnlineOnConnect: true
         });
 
-        globalConn = conn;
-        botStartTime = Date.now();
+        activeBots[sessionId] = conn;
 
         conn.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
             
             if (connection === 'open') {
-                console.log(fancy("👹 INSIDIOUS: THE LAST KEY ACTIVATED"));
-                console.log(fancy("✅ Bot is now online"));
-                isConnected = true;
-
-                let botName = conn.user?.name || "INSIDIOUS";
-                let botNumber = conn.user?.id?.split(':')[0] || "Unknown";
-                const botSecret = handler.getBotId ? handler.getBotId() : 'Unknown';
-                const pairedCount = handler.getPairedNumbers ? handler.getPairedNumbers().length : 0;
-
-                console.log(fancy(`🤖 Name: ${botName}`));
-                console.log(fancy(`📞 Number: ${botNumber}`));
-                console.log(fancy(`🆔 Bot ID: ${botSecret}`));
-                console.log(fancy(`👥 Owners: ${pairedCount}`));
-
-                try {
-                    if (handler && typeof handler.init === 'function') {
-                        await handler.init(conn);
-                    }
-                } catch (e) {
-                    console.error("Handler init error:", e.message);
+                console.log(fancy(`✅ Session [${sessionId}] is ONLINE`));
+                await Session.findOneAndUpdate({ sessionId }, { isActive: true }, { upsert: true });
+                
+                // Initialize handler for this connection
+                if (handler && typeof handler.init === 'function') {
+                    await handler.init(conn);
                 }
-
-                if (conn.authState?.creds) {
-                    await saveSessionToMongoDB(botNumber, conn.authState.creds, {});
-                }
-
-                // Send welcome message to owner
-                setTimeout(async () => {
-                    try {
-                        if (config.ownerNumber && config.ownerNumber.length > 0) {
-                            const ownerNum = config.ownerNumber[0].replace(/[^0-9]/g, '');
-                            if (ownerNum.length >= 10) {
-                                const ownerJid = ownerNum + '@s.whatsapp.net';
-                                const welcomeMsg = `
-╭─── • 🥀 • ───╮
-   INSIDIOUS: THE LAST KEY
-╰─── • 🥀 • ───╯
-
-✅ *Bot Connected Successfully!*
-🤖 *Name:* ${botName}
-📞 *Number:* ${botNumber}
-🆔 *Bot ID:* ${botSecret}
-👥 *Owners:* ${pairedCount}
-
-⚡ *Status:* ONLINE
-📦 *Storage:* MongoDB
-👑 *Developer:* STANYTZ
-💾 *Version:* 2.1.1`;
-                                await conn.sendMessage(ownerJid, { 
-                                    image: { url: config.botImage },
-                                    caption: welcomeMsg,
-                                    contextInfo: { isForwarded: true }
-                                });
-                            }
-                        }
-                    } catch (e) {}
-                }, 3000);
             }
             
             if (connection === 'close') {
-                console.log(fancy("🔌 Connection closed"));
-                isConnected = false;
-                // HAKUNA AUTO-RECONNECT – TUNAACHA TU
+                const reason = lastDisconnect?.error?.output?.statusCode;
+                console.log(fancy(`🔌 Connection closed for [${sessionId}]. Reason: ${reason}`));
+                
+                // If logged out, delete session permanently
+                if (reason === DisconnectReason.loggedOut) {
+                    await Session.deleteOne({ sessionId });
+                    delete activeBots[sessionId];
+                    if (fs.existsSync(sessionPath)) fs.rmSync(sessionPath, { recursive: true });
+                } else {
+                    // We don't auto-reconnect here to follow your request.
+                    // It will stay offline until the server restarts or is manually triggered.
+                    delete activeBots[sessionId];
+                }
             }
         });
 
         conn.ev.on('creds.update', async () => {
-            if (conn.authState?.creds) {
-                await saveCreds();
-                await saveSessionToMongoDB('insidious_main', conn.authState.creds, {});
-            }
+            await saveCreds();
+            const creds = JSON.parse(fs.readFileSync(path.join(sessionPath, 'creds.json')));
+            await Session.findOneAndUpdate(
+                { sessionId }, 
+                { creds, lastActive: new Date(), isActive: true }, 
+                { upsert: true }
+            );
         });
 
         conn.ev.on('messages.upsert', async (m) => {
-            try {
-                if (handler && typeof handler === 'function') {
-                    await handler(conn, m);
-                }
-            } catch (error) {
-                console.error("Message handler error:", error.message);
-            }
+            if (handler) await handler(conn, m);
         });
 
-        conn.ev.on('group-participants.update', async (update) => {
-            try {
-                if (handler && handler.handleGroupUpdate) {
-                    await handler.handleGroupUpdate(conn, update);
-                }
-            } catch (error) {
-                console.error("Group update error:", error.message);
-            }
-        });
+        return conn;
 
-        conn.ev.on('call', async (call) => {
-            try {
-                if (handler && handler.handleCall) {
-                    await handler.handleCall(conn, call);
-                }
-            } catch (error) {
-                console.error("Call handler error:", error.message);
-            }
-        });
-
-        console.log(fancy("🚀 Bot ready – inaendelea 24/7"));
-        
     } catch (error) {
-        console.error("Start error:", error.message);
+        console.error(`Error starting session ${sessionId}:`, error.message);
     }
 }
 
-startBot();
+// ✅ FUNCTION TO RESTORE ALL SAVED SESSIONS FROM DB
+async function restoreSessions() {
+    console.log(fancy("📂 Restoring all active sessions from Database..."));
+    try {
+        const sessions = await Session.find({ isActive: true });
+        console.log(fancy(`Found ${sessions.length} sessions to restore.`));
+        
+        for (const session of sessions) {
+            await startBot(session.sessionId, true);
+            await delay(3000); // Small delay to prevent CPU spike
+        }
+    } catch (e) {
+        console.error("Restore Error:", e);
+    }
+}
 
 // ==================== HTTP ENDPOINTS ====================
 
-// ✅ PAIRING ENDPOINT
+// ✅ PREMIUM PAIRING ENDPOINT (Fixes "Connection Closed" issues)
 app.get('/pair', async (req, res) => {
-    try {
-        let num = req.query.num;
-        if (!num) return res.json({ success: false, error: "Provide number! Example: /pair?num=255123456789" });
-        
-        const cleanNum = num.replace(/[^0-9]/g, '');
-        if (cleanNum.length < 10) return res.json({ success: false, error: "Invalid number. Must be at least 10 digits." });
+    let num = req.query.num;
+    if (!num) return res.json({ success: false, error: "Number is required" });
+    
+    const cleanNum = num.replace(/[^0-9]/g, '');
+    const tempId = `temp_${cleanNum}`;
 
-        if (!globalConn) {
-            return res.json({ success: false, error: "Bot is initializing. Please try again in a few seconds." });
-        }
+    console.log(fancy(`🔑 Pairing request for: ${cleanNum}`));
+
+    try {
+        // Create a dedicated temporary session for pairing
+        const sessionPath = path.join(__dirname, 'sessions', tempId);
+        if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
+
+        const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+        const { version } = await fetchLatestBaileysVersion();
+
+        const tempConn = makeWASocket({
+            version,
+            auth: state,
+            logger: pino({ level: "silent" }),
+            browser: Browsers.macOS("Safari")
+        });
+
+        // Wait for socket to be ready to request code
+        await delay(5000); 
+        const code = await tempConn.requestPairingCode(cleanNum);
         
-        console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
-        
-        const code = await Promise.race([
-            globalConn.requestPairingCode(cleanNum),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
-        ]);
-        
-        res.json({ success: true, code, message: `8-digit pairing code: ${code}` });
-        
+        res.json({ success: true, code });
+
+        // Monitor for successful login
+        tempConn.ev.on('creds.update', async () => {
+            await saveCreds();
+            if (tempConn.authState.creds.me) {
+                const finalId = tempConn.authState.creds.me.id.split(':')[0];
+                const creds = JSON.parse(fs.readFileSync(path.join(sessionPath, 'creds.json')));
+                
+                // Save to MongoDB as a permanent session
+                await Session.findOneAndUpdate({ sessionId: finalId }, { creds, isActive: true }, { upsert: true });
+                
+                // Start as a full bot and cleanup temp
+                startBot(finalId, true);
+                console.log(fancy(`✅ New session paired: ${finalId}`));
+            }
+        });
+
     } catch (err) {
-        console.error("Pairing error:", err.message);
-        if (err.message.includes("already paired")) {
-            res.json({ success: true, message: "Number already paired" });
-        } else {
-            res.json({ success: false, error: "Failed: " + err.message });
-        }
+        res.json({ success: false, error: err.message });
     }
 });
 
-// ✅ UNPAIR ENDPOINT
-app.get('/unpair', async (req, res) => {
-    try {
-        let num = req.query.num;
-        if (!num) return res.json({ success: false, error: "Provide number! Example: /unpair?num=255123456789" });
-        
-        const cleanNum = num.replace(/[^0-9]/g, '');
-        if (cleanNum.length < 10) return res.json({ success: false, error: "Invalid number" });
-        
-        let result = false;
-        if (handler && handler.unpairNumber) {
-            result = await handler.unpairNumber(cleanNum);
-        } else {
-            return res.json({ success: false, error: "Unpair function not available in handler" });
-        }
-        
-        res.json({ success: result, message: result ? `Number ${cleanNum} unpaired successfully` : `Failed to unpair ${cleanNum}` });
-        
-    } catch (err) {
-        console.error("Unpair error:", err.message);
-        res.json({ success: false, error: "Failed: " + err.message });
-    }
-});
-
-// ✅ HEALTH CHECK
-app.get('/health', (req, res) => {
-    const uptime = process.uptime();
+// ✅ HEALTH & STATUS
+app.get('/status', (req, res) => {
     res.json({
-        status: 'healthy',
-        connected: isConnected,
-        uptime: `${Math.floor(uptime/3600)}h ${Math.floor((uptime%3600)/60)}m ${Math.floor(uptime%60)}s`,
+        status: 'running',
+        active_connections: Object.keys(activeBots).length,
         mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-    });
-});
-
-// ✅ BOT INFO
-app.get('/botinfo', (req, res) => {
-    if (!globalConn || !globalConn.user) return res.json({ connected: false });
-    const botSecret = handler.getBotId ? handler.getBotId() : 'Unknown';
-    const pairedCount = handler.getPairedNumbers ? handler.getPairedNumbers().length : 0;
-    res.json({
-        connected: true,
-        botName: globalConn.user?.name,
-        botNumber: globalConn.user?.id?.split(':')[0],
-        botSecret,
-        pairedOwners: pairedCount,
-        uptime: Date.now() - botStartTime
     });
 });
 
 // ✅ START SERVER
 app.listen(PORT, () => {
-    console.log(fancy(`🌐 Web Interface: http://localhost:${PORT}`));
-    console.log(fancy(`🔗 Pairing: http://localhost:${PORT}/pair?num=255XXXXXXXXX`));
+    console.log(fancy(`🌐 Server running on http://localhost:${PORT}`));
     console.log(fancy("👑 Developer: STANYTZ"));
-    console.log(fancy("📦 Storage: MongoDB"));
+    console.log(fancy("📦 Storage: MongoDB Full-Sync"));
 });
 
 module.exports = app;
