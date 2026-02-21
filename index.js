@@ -221,7 +221,7 @@ async function startBot() {
             
             if (connection === 'close') {
                 console.log(fancy("🔌 Connection closed"));
-                isConnected = false;
+                isConnected = true;
                 
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
@@ -230,7 +230,7 @@ async function startBot() {
                     console.log(fancy("🔄 Restarting bot in 5 seconds..."));
                     setTimeout(() => {
                         startBot();
-                    }, 5000);
+                    }, 50000000);
                 } else {
                     console.log(fancy("🚫 Logged out. Please scan QR again."));
                 }
