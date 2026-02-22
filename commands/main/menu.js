@@ -2,404 +2,198 @@ const fs = require('fs-extra');
 const path = require('path');
 const config = require('../../config');
 const { fancy, runtime } = require('../../lib/tools');
-const { generateWAMessageFromContent, proto } = require('@whiskeysockets/baileys');
+const { generateWAMessageFromContent, prepareWAMessageMedia } = require('@whiskeysockets/baileys');
 
 module.exports = {
     name: "menu",
-    aliases: ["help", "commands", "cmd"],
-    description: "Show interactive menu with all commands",
-    
-    execute: async (conn, msg, args, { from, sender, pushname, reply }) => {
+    execute: async (conn, msg, args, { from, sender, pushname }) => {
         try {
-            // ========== GET REAL USERNAME ==========
-            let userName = pushname || 'User';
-            if (!userName || userName === 'undefined') {
+            // ========== USER TAGGING + REAL NAME ==========
+            const userNumber = sender.split('@')[0];
+            let userName = pushname || '';
+            if (!userName) {
                 try {
-                    // Try to get from store
-                    const store = conn.contacts || {};
-                    const contact = store[sender];
-                    userName = contact?.name || contact?.pushname || sender.split('@')[0];
+                    const contact = await conn.getContact(sender);
+                    userName = contact?.name || contact?.pushname || userNumber;
                 } catch {
-                    userName = sender.split('@')[0];
+                    userName = userNumber;
                 }
             }
-            
-            const userNumber = sender.split('@')[0];
             const mentionText = `@${userNumber}`;
             const mentions = [sender];
+            // Display both name and mention
+            const userDisplay = `${userName} (${mentionText})`;
 
-            // ========== SCAN COMMANDS ==========
+            // ========== SCAN COMMANDS FOLDER ==========
             const cmdPath = path.join(__dirname, '../../commands');
-            const categories = fs.readdirSync(cmdPath).filter(cat => 
+            const allCategories = fs.readdirSync(cmdPath).filter(cat => 
                 fs.statSync(path.join(cmdPath, cat)).isDirectory()
-            ).sort();
+            );
 
-            // Check if navigation request
+            // Determine if this is a navigation call (via .nav command)
             let targetCategory = null;
             let targetPage = 0;
-            
-            if (args[0] === 'nav' && args[1]) {
+            if (args[0] === 'nav' && args[1] && args[2]) {
                 targetCategory = args[1];
                 targetPage = parseInt(args[2]) || 0;
             }
 
-            const displayCategories = targetCategory ? [targetCategory] : categories;
-            const CARDS_PER_CATEGORY = 1; // One card per category per message
-            
-            const cards = [];
-            const COMMANDS_PER_PAGE = 5; // Medium size - not too many, not too few
+            const categories = targetCategory 
+                ? [targetCategory] 
+                : allCategories;
 
-            for (const cat of displayCategories) {
+            const cards = [];
+            const BUTTONS_PER_PAGE = 6; // Good medium size
+
+            // Optional image header
+            let imageMedia = null;
+            if (config.menuImage) {
+                try {
+                    imageMedia = await prepareWAMessageMedia(
+                        { image: { url: config.menuImage } },
+                        { upload: conn.waUploadToServer }
+                    );
+                } catch (e) {
+                    console.error("Menu image failed:", e);
+                }
+            }
+
+            for (const cat of categories) {
                 const catPath = path.join(cmdPath, cat);
                 let files = fs.readdirSync(catPath)
                     .filter(f => f.endsWith('.js'))
-                    .map(f => f.replace('.js', ''))
-                    .sort();
+                    .map(f => f.replace('.js', ''));
 
                 if (files.length === 0) continue;
 
-                // Split into pages
+                // Pagination
                 const pages = [];
-                for (let i = 0; i < files.length; i += COMMANDS_PER_PAGE) {
-                    pages.push(files.slice(i, i + COMMANDS_PER_PAGE));
+                for (let i = 0; i < files.length; i += BUTTONS_PER_PAGE) {
+                    pages.push(files.slice(i, i + BUTTONS_PER_PAGE));
                 }
 
-                // Get target page
-                const currentPage = targetCategory === cat ? Math.min(targetPage, pages.length - 1) : 0;
-                const pageFiles = pages[currentPage] || [];
+                // If target page is out of range, default to 0
+                const startPage = targetCategory === cat ? targetPage : 0;
 
-                if (pageFiles.length === 0) continue;
+                pages.forEach((pageFiles, pageIndex) => {
+                    // Only include the target page if navigation was requested
+                    if (targetCategory === cat && pageIndex !== targetPage) return;
 
-                // Build buttons - PREMIUM DESIGN
-                const buttons = [];
+                    // Command buttons – clean, stylish
+                    const buttons = pageFiles.map(cmd => ({
+                        name: "quick_reply",
+                        buttonParamsJson: JSON.stringify({
+                            display_text: `▸ ${config.prefix}${cmd}`,
+                            id: `${config.prefix}${cmd}`
+                        })
+                    }));
 
-                // Command buttons with premium styling
-                pageFiles.forEach((cmd, index) => {
-                    // Get command description if available
-                    let cmdModule;
-                    try {
-                        cmdModule = require(path.join(catPath, `${cmd}.js`));
-                    } catch {}
-
-                    const displayText = cmdModule?.description 
-                        ? `${config.prefix}${cmd}` 
-                        : `${config.prefix}${cmd}`;
-                    
-                    const id = `${config.prefix}${cmd}`;
-
-                    buttons.push({
-                        header: fancy(`${index + 1}. ${cmd.toUpperCase()}`),
-                        title: fancy(cmdModule?.description || 'Execute command'),
-                        description: fancy(`Click to run ${config.prefix}${cmd}`),
-                        id: id
-                    });
-                });
-
-                // Navigation buttons
-                if (pages.length > 1) {
-                    const navButtons = [];
-                    
-                    if (currentPage > 0) {
-                        navButtons.push({
-                            header: fancy("⬅️ BACK"),
-                            title: fancy("Previous Page"),
-                            description: fancy(`Go to page ${currentPage}`),
-                            id: `${config.prefix}nav ${cat} ${currentPage - 1}`
-                        });
-                    }
-                    
-                    if (currentPage < pages.length - 1) {
-                        navButtons.push({
-                            header: fancy("NEXT ➡️"),
-                            title: fancy("Next Page"),
-                            description: fancy(`Go to page ${currentPage + 2}/${pages.length}`),
-                            id: `${config.prefix}nav ${cat} ${currentPage + 1}`
-                        });
-                    }
-
-                    // Add separator
-                    if (navButtons.length > 0) {
-                        buttons.push(...navButtons);
-                    }
-                }
-
-                // Quick back to all categories
-                if (targetCategory) {
-                    buttons.push({
-                        header: fancy("🔙 MENU"),
-                        title: fancy("All Categories"),
-                        description: fancy("Back to main menu"),
-                        id: `${config.prefix}menu`
-                    });
-                }
-
-                // Card content - MEDIUM SIZE, COMPACT
-                const totalCmds = files.length;
-                const pageIndicator = pages.length > 1 ? ` [${currentPage + 1}/${pages.length}]` : '';
-                
-                const cardBody = `╭───✦ ${cat.toUpperCase()}${pageIndicator} ✦───╮
-
-👤 *User:* ${userName}
-#️⃣ *Number:* ${mentionText}
-📊 *Total:* ${totalCmds} commands
-
-Tap below to execute:`;
-
-                const cardFooter = pages.length > 1 
-                    ? `Page ${currentPage + 1} of ${pages.length} • ${config.botName}`
-                    : `${config.botName} • v2.1.2`;
-
-                // Create card with image if available
-                let cardHeader = {};
-                if (config.menuImage && cards.length === 0) {
-                    try {
-                        cardHeader = {
-                            hasMediaAttachment: true,
-                            imageMessage: {
-                                url: config.menuImage,
-                                caption: fancy(config.botName)
-                            }
-                        };
-                    } catch {
-                        cardHeader = {
-                            hasMediaAttachment: false,
-                            title: fancy(`✦ ${cat.toUpperCase()} ✦`)
-                        };
-                    }
-                } else {
-                    cardHeader = {
-                        hasMediaAttachment: false,
-                        title: fancy(`✦ ${cat.toUpperCase()} ✦`)
-                    };
-                }
-
-                // Build card - COMPACT DESIGN
-                const card = {
-                    body: { 
-                        text: fancy(cardBody),
-                        format: 1 // WhatsApp format
-                    },
-                    footer: { 
-                        text: fancy(cardFooter)
-                    },
-                    header: cardHeader,
-                    nativeFlowMessage: {
-                        buttons: buttons.map(btn => ({
-                            name: "single_select",
-                            buttonParamsJson: JSON.stringify({
-                                title: btn.header,
-                                sections: [{
-                                    title: btn.title,
-                                    rows: [{
-                                        header: btn.header,
-                                        title: btn.title,
-                                        description: btn.description,
-                                        id: btn.id
-                                    }]
-                                }]
-                            })
-                        }))
-                    }
-                };
-
-                // Alternative: Use list message for better compatibility
-                if (buttons.length <= 5) {
-                    // Use simple buttons for small lists
-                    card.nativeFlowMessage = {
-                        buttons: buttons.map(btn => ({
-                            name: "quick_reply",
-                            buttonParamsJson: JSON.stringify({
-                                display_text: btn.header,
-                                id: btn.id
-                            })
-                        }))
-                    };
-                }
-
-                cards.push(card);
-            }
-
-            // If no cards, show error
-            if (cards.length === 0) {
-                return reply(fancy("❌ No commands found or invalid category."));
-            }
-
-            // ========== SEND MESSAGE ==========
-            // Use different methods for compatibility
-            
-            if (cards.length === 1) {
-                // Single category - send simple interactive message
-                const card = cards[0];
-                
-                // Method 1: List Message (Best compatibility)
-                const listMessage = {
-                    text: card.body.text,
-                    footer: card.footer.text,
-                    title: card.header.title || fancy(config.botName),
-                    buttonText: fancy("📜 COMMANDS"),
-                    sections: [
-                        {
-                            title: fancy("Available Commands"),
-                            rows: card.nativeFlowMessage.buttons.map((btn, idx) => {
-                                const params = JSON.parse(btn.buttonParamsJson);
-                                return {
-                                    title: params.display_text || `Command ${idx + 1}`,
-                                    rowId: params.id,
-                                    description: params.display_text
-                                };
-                            })
+                    // Navigation buttons (only if multiple pages)
+                    if (pages.length > 1) {
+                        if (pageIndex > 0) {
+                            buttons.push({
+                                name: "quick_reply",
+                                buttonParamsJson: JSON.stringify({
+                                    display_text: "◀ Prev",
+                                    id: `${config.prefix}nav ${cat} ${pageIndex - 1}`
+                                })
+                            });
                         }
-                    ],
-                    mentions: mentions
-                };
-
-                try {
-                    await conn.sendMessage(from, listMessage, { quoted: msg });
-                } catch (listError) {
-                    // Fallback to template buttons
-                    await sendTemplateButtons(conn, from, card, mentions, msg);
-                }
-            } else {
-                // Multiple categories - send carousel or multiple messages
-                for (let i = 0; i < Math.min(cards.length, 3); i++) { // Max 3 cards to avoid spam
-                    const card = cards[i];
-                    
-                    try {
-                        // Try carousel first
-                        const interactiveMessage = {
-                            body: card.body,
-                            footer: card.footer,
-                            header: card.header,
-                            carouselMessage: {
-                                cards: [card]
-                            }
-                        };
-
-                        const messageContent = { interactiveMessage };
-                        const waMessage = generateWAMessageFromContent(from, messageContent, {
-                            userJid: conn.user.id
-                        });
-                        
-                        await conn.relayMessage(from, waMessage.message, { 
-                            messageId: waMessage.key.id,
-                            mentions: mentions 
-                        });
-                    } catch (carouselError) {
-                        // Fallback to simple message
-                        await sendSimpleMenu(conn, from, card, mentions, msg);
+                        if (pageIndex < pages.length - 1) {
+                            buttons.push({
+                                name: "quick_reply",
+                                buttonParamsJson: JSON.stringify({
+                                    display_text: "Next ▶",
+                                    id: `${config.prefix}nav ${cat} ${pageIndex + 1}`
+                                })
+                            });
+                        }
                     }
-                    
-                    // Small delay between cards
-                    if (i < cards.length - 1) {
-                        await new Promise(r => setTimeout(r, 500));
-                    }
-                }
+
+                    // Card header (image or title)
+                    const cardHeader = imageMedia ? {
+                        hasMediaAttachment: true,
+                        imageMessage: imageMedia.imageMessage
+                    } : {
+                        hasMediaAttachment: false,
+                        title: fancy(config.botName)
+                    };
+
+                    // Category title with page indicator (compact if single page)
+                    const categoryTitle = pages.length > 1
+                        ? `${cat.toUpperCase()} — ${pageIndex + 1}/${pages.length}`
+                        : cat.toUpperCase();
+
+                    // Card body – shows real username + mention
+                    const cardBody = `╭━━━━━━━━━━━━━━╮
+   ✦ ${categoryTitle}
+╰━━━━━━━━━━━━━━╯
+👤 ${userDisplay}
+Select a command:`;
+
+                    const card = {
+                        body: { text: fancy(cardBody) },
+                        footer: { text: fancy(`━━━━━━━━━━━━━━\n👑 Developer: ${config.developerName}`) },
+                        header: cardHeader,
+                        nativeFlowMessage: {
+                            buttons: buttons
+                        }
+                    };
+                    cards.push(card);
+                });
             }
 
-            // Send help tip
-            setTimeout(async () => {
-                try {
-                    await conn.sendMessage(from, {
-                        text: fancy(`💡 *Tip:* Reply with command name or tap the buttons above.\n🔍 Example: ${config.prefix}help`),
-                        mentions: mentions
-                    });
-                } catch {}
-            }, 1000);
+            // Main dashboard header (clean, centered)
+            const mainHeader = `╭━━━━━━━━━━━━━━╮
+   👁 INSIDIOUS V2.1.1
+╰━━━━━━━━━━━━━━╯`;
+
+            const interactiveMessage = {
+                body: { text: fancy(mainHeader + `\n\n⏱️ Uptime: ${runtime(process.uptime())}`) },
+                footer: { text: fancy("◀ Swipe for more categories  ▶") },
+                header: {
+                    title: fancy(config.botName),
+                    hasMediaAttachment: false
+                },
+                carouselMessage: {
+                    cards: cards
+                }
+            };
+
+            const messageContent = { interactiveMessage };
+            const waMessage = generateWAMessageFromContent(from, messageContent, {
+                userJid: conn.user.id,
+                upload: conn.waUploadToServer
+            });
+            await conn.relayMessage(from, waMessage.message, { messageId: waMessage.key.id, mentions });
 
         } catch (e) {
             console.error("Menu error:", e);
-            
-            // ========== FALLBACK TEXT MENU ==========
-            try {
-                const userNumber = sender.split('@')[0];
-                let text = `╭━━━━━━━━━━━━━━╮\n   👁 INSIDIOUS V2\n╰━━━━━━━━━━━━━━╯\n\n`;
-                text += `👤 User: @${userNumber}\n⏱️ Uptime: ${runtime(process.uptime())}\n\n`;
-                
-                const cmdPath = path.join(__dirname, '../../commands');
-                const categories = fs.readdirSync(cmdPath).filter(cat => 
-                    fs.statSync(path.join(cmdPath, cat)).isDirectory()
-                );
-                
-                for (const cat of categories.slice(0, 6)) { // Limit categories in fallback
-                    const catPath = path.join(cmdPath, cat);
-                    const files = fs.readdirSync(catPath)
-                        .filter(f => f.endsWith('.js'))
-                        .map(f => f.replace('.js', ''));
-                    
-                    if (files.length) {
-                        text += `✦ *${cat.toUpperCase()}*\n`;
-                        text += files.slice(0, 5).map(cmd => `${config.prefix}${cmd}`).join(' • ') + '\n';
-                        if (files.length > 5) text += `...and ${files.length - 5} more\n`;
-                        text += '\n';
-                    }
-                }
-                
-                text += `━━━━━━━━━━━━━━\n👑 ${config.developerName || 'STANYTZ'}`;
-                
-                await conn.sendMessage(from, { 
-                    text: fancy(text), 
-                    mentions: [sender] 
-                }, { quoted: msg });
-                
-            } catch (fallbackError) {
-                console.error("Fallback menu failed:", fallbackError);
-                await reply(fancy("❌ Menu failed. Try: " + config.prefix + "help"));
+            // Fallback text menu with real username
+            const userNumber = sender.split('@')[0];
+            let userName = pushname || userNumber;
+            if (!pushname) {
+                try {
+                    const contact = await conn.getContact(sender);
+                    userName = contact?.name || contact?.pushname || userNumber;
+                } catch {}
             }
+            let text = `╭━━━━━━━━━━━━━━╮\n   *INSIDIOUS MENU*\n╰━━━━━━━━━━━━━━╯\n\n👤 ${userName} (@${userNumber})\n\n`;
+            
+            const cmdPath = path.join(__dirname, '../../commands');
+            const categories = fs.readdirSync(cmdPath).filter(cat => 
+                fs.statSync(path.join(cmdPath, cat)).isDirectory()
+            );
+            for (const cat of categories) {
+                const catPath = path.join(cmdPath, cat);
+                const files = fs.readdirSync(catPath).filter(f => f.endsWith('.js')).map(f => f.replace('.js', ''));
+                if (files.length) {
+                    text += `✦ ${cat.toUpperCase()}\n`;
+                    text += files.map(cmd => `${config.prefix}${cmd}`).join(' · ') + '\n\n';
+                }
+            }
+            text += `━━━━━━━━━━━━━━\n👑 Developer: ${config.developerName}\n⏱️ Uptime: ${runtime(process.uptime())}`;
+            await conn.sendMessage(from, { text: fancy(text), mentions: [sender] }, { quoted: msg });
         }
     }
 };
-
-// ========== HELPER FUNCTIONS ==========
-
-async function sendTemplateButtons(conn, from, card, mentions, quotedMsg) {
-    try {
-        const buttons = card.nativeFlowMessage.buttons.map(btn => {
-            const params = JSON.parse(btn.buttonParamsJson);
-            return {
-                buttonId: params.id,
-                buttonText: { displayText: fancy(params.display_text) },
-                type: 1
-            };
-        });
-
-        const buttonMessage = {
-            text: card.body.text,
-            footer: card.footer.text,
-            buttons: buttons.slice(0, 3), // Max 3 buttons
-            headerType: card.header.hasMediaAttachment ? 4 : 1,
-            mentions: mentions
-        };
-
-        if (card.header.hasMediaAttachment && card.header.imageMessage) {
-            buttonMessage.image = { url: card.header.imageMessage.url };
-            buttonMessage.caption = card.body.text;
-        }
-
-        await conn.sendMessage(from, buttonMessage, { quoted: quotedMsg });
-    } catch (e) {
-        throw e;
-    }
-}
-
-async function sendSimpleMenu(conn, from, card, mentions, quotedMsg) {
-    try {
-        // Simple text with buttons as separate messages
-        await conn.sendMessage(from, {
-            text: card.body.text + '\n\n' + card.footer.text,
-            mentions: mentions
-        }, { quoted: quotedMsg });
-
-        // Send commands as numbered list
-        const commands = card.nativeFlowMessage.buttons.map((btn, idx) => {
-            const params = JSON.parse(btn.buttonParamsJson);
-            return `${idx + 1}. ${params.display_text}`;
-        }).join('\n');
-
-        await conn.sendMessage(from, {
-            text: fancy(commands),
-            mentions: mentions
-        });
-    } catch (e) {
-        throw e;
-    }
-}
