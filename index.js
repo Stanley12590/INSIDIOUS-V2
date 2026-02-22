@@ -1,193 +1,262 @@
 const express = require('express');
-const pino = require('pino');
-const path = require('path');
-const { makeWASocket, DisconnectReason, Browsers, fetchLatestBaileysVersion } = require('@adiwajshing/baileys');
-const { useMongoDBAuthState } = require('./authServices'); // Custom module for managing MongoDB auth state
-const AuthDB = require('./AuthDB'); // Database model to manage authentication
-const PORT = process.env.PORT || 3000;
+const { default: makeWASocket, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason, initAuthCreds, BufferJSON } = require("@whiskeysockets/baileys");
+const pino = require("pino");
+const mongoose = require("mongoose");
+const path = require("path");
+const fs = require('fs');
 
-const logger = pino({ level: 'info' });
+const handler = require('./handler');
+
+// ✅ FANCY FUNCTION
+function fancy(text) {
+    if (!text || typeof text !== 'string') return text;
+    const fancyMap = {
+        a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ',
+        j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ',
+        s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ'
+    };
+    return text.split('').map(c => fancyMap[c.toLowerCase()] || c).join('');
+}
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// Maintain active bot connections globally
+// ✅ MONGODB SCHEMA
+const AuthSchema = new mongoose.Schema({ sessionId: String, id: String, data: String });
+const AuthDB = mongoose.models.AuthDB || mongoose.model('AuthDB', AuthSchema);
+
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
+
+mongoose.connect(MONGODB_URI).then(async () => {
+    console.log(fancy("✅ MongoDB Connected"));
+    const savedSessions = await AuthDB.distinct('sessionId');
+    for (const sessionId of savedSessions) {
+        if (sessionId !== 'temp_pairing') startBot(sessionId);
+    }
+});
+
+// ✅ SESSION MANAGER (MongoDB)
+async function useMongoDBAuthState(sessionId) {
+    const writeData = async (data, id) => {
+        const stringified = JSON.stringify(data, BufferJSON.replacer);
+        await AuthDB.updateOne({ sessionId, id }, { data: stringified }, { upsert: true });
+    };
+    const readData = async (id) => {
+        const doc = await AuthDB.findOne({ sessionId, id });
+        return doc ? JSON.parse(doc.data, BufferJSON.reviver) : null;
+    };
+    const removeData = async (id) => await AuthDB.deleteOne({ sessionId, id });
+
+    let creds = await readData('creds') || initAuthCreds();
+    return {
+        state: {
+            creds,
+            keys: {
+                get: async (type, ids) => {
+                    const data = {};
+                    await Promise.all(ids.map(async (id) => {
+                        let value = await readData(`${type}-${id}`);
+                        if (type === 'app-state-sync-key' && value) {
+                            value = require('@whiskeysockets/baileys').proto.Message.AppStateSyncKeyData.fromObject(value);
+                        }
+                        data[id] = value;
+                    }));
+                    return data;
+                },
+                set: async (data) => {
+                    for (const category in data) {
+                        for (const id in data[category]) {
+                            const value = data[category][id];
+                            if (value) await writeData(value, `${category}-${id}`);
+                            else await removeData(`${category}-${id}`);
+                        }
+                    }
+                }
+            }
+        },
+        saveCreds: () => writeData(creds, 'creds')
+    };
+}
+
 const globalConns = new Map();
 
-/**
- * Validate and clean up the phone number format
- * This checks if the number has at least 10 digits, and removes any non-numeric characters.
- */
-const validateAndCleanNumber = (num) => {
-    const cleanNum = num.replace(/[^0-9]/g, '');
-    if (cleanNum.length < 10 || cleanNum.length > 15) {
-        return null; // Invalid number
-    }
-    return cleanNum;
-};
-
-/**
- * Handles bot connection lifecycle events.
- * Deals with connections being established or closed.
- */
-const handleConnectionUpdate = async (update, sessionId, conn, saveCreds) => {
-    const { connection, lastDisconnect } = update;
-
-    if (connection === 'open') {
-        logger.info(`✅ Bot is now online for Session ID: ${sessionId}`);
-        try {
-            await conn.sendMessage(conn.user.id, { text: "🤖 Insidious bot connected successfully!" });
-            logger.info('Welcome message sent to bot user.');
-        } catch (e) {
-            logger.error(`Failed to send welcome message for session ID ${sessionId}. Error: `, e);
-        }
-    }
-
-    if (connection === 'close') {
-        logger.warn(`Connection closed for Session ID: ${sessionId}`);
-        const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-
-        if (shouldReconnect) {
-            logger.info(`Retrying connection for session ID ${sessionId} in 5 seconds...`);
-            setTimeout(() => startBot(sessionId), 5000);
-        } else {
-            logger.info(`Session ID ${sessionId} is logged out. Cleaning up session.`);
-            await AuthDB.deleteMany({ sessionId });
-            globalConns.delete(sessionId);
-        }
-    }
-};
-
-/**
- * Starts a bot session for the given sessionId.
- * Sets up the connection to WhatsApp Web using Baileys library.
- */
-const startBot = async (sessionId) => {
+async function startBot(sessionId) {
     try {
-        logger.info(`Starting bot for Session ID: ${sessionId}`);
         const { state, saveCreds } = await useMongoDBAuthState(sessionId);
         const { version } = await fetchLatestBaileysVersion();
 
         const conn = makeWASocket({
             version,
-            auth: { creds: state.creds, keys: state.keys },
-            logger,
-            browser: Browsers.ubuntu('Chrome'),
+            auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })) },
+            logger: pino({ level: "silent" }),
+            browser: Browsers.ubuntu("Chrome"),
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 0,
+            keepAliveIntervalMs: 10000,
+            syncFullHistory: false,
+            markOnlineOnConnect: true,
+            generateHighQualityLinkPreview: false
         });
 
         globalConns.set(sessionId, conn);
 
-        conn.ev.on('connection.update', (update) => handleConnectionUpdate(update, sessionId, conn, saveCreds));
-        conn.ev.on('creds.update', saveCreds);
-
-        conn.ev.on('messages.upsert', async (message) => {
-            if (typeof handler === 'function') {
-                handler(conn, message);
+        conn.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect } = update;
+            if (connection === 'open') {
+                console.log(fancy(`✅ Bot Online: ${sessionId}`));
+                try {
+                    if (conn.user && conn.user.id) {
+                        await conn.sendMessage(conn.user.id, { text: fancy("insidious bot connected successfully!") });
+                    }
+                } catch (e) {
+                    console.error("Startup message error:", e);
+                }
+            }
+            if (connection === 'close') {
+                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+                if (shouldReconnect) {
+                    console.log(fancy(`⚠️ Reconnecting ${sessionId} in 5s...`));
+                    setTimeout(() => startBot(sessionId), 5000);
+                } else {
+                    console.log(fancy(`🔴 Logged out: ${sessionId}`));
+                    await AuthDB.deleteMany({ sessionId });
+                    globalConns.delete(sessionId);
+                }
             }
         });
+
+        conn.ev.on('creds.update', saveCreds);
+        conn.ev.on('messages.upsert', async (m) => { if (handler) handler(conn, m); });
 
         return conn;
     } catch (e) {
-        logger.error(`Error while starting bot for session ID ${sessionId}:`, e);
+        console.error("Error starting bot:", e);
     }
-};
+}
 
-// Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-/**
- * PAIRING ENDPOINT: Handles WhatsApp pairing for a given phone number
- */
+// ✅ PAIRING ENDPOINT – COMPLETELY FIXED
 app.get('/pair', async (req, res) => {
-    const num = req.query.num;
+    let num = req.query.num;
+    if (!num) return res.json({ error: "No number provided" });
 
-    if (!num) {
-        return res.status(400).json({ error: 'No phone number provided!' });
-    }
-
-    // Validate and clean number format
-    const cleanNum = validateAndCleanNumber(num);
-
-    if (!cleanNum) {
-        return res.status(400).json({ error: 'Invalid phone number. Make sure to include at least 10 digits.' });
+    const cleanNum = num.replace(/[^0-9]/g, '');
+    if (cleanNum.length < 10 || cleanNum.length > 15) {
+        return res.json({ error: "Invalid number – must be 10-15 digits" });
     }
 
     try {
-        logger.info(`Initiating pairing process for number: ${cleanNum}`);
-
-        // 1. Clear any existing session for this number if it exists
+        // Clear any existing session
         await AuthDB.deleteMany({ sessionId: cleanNum });
 
-        // 2. Create a temporary auth state for this number
         const { state, saveCreds } = await useMongoDBAuthState(cleanNum);
         const { version } = await fetchLatestBaileysVersion();
 
-        // 3. Make a temporary socket connection for pairing
         const tempConn = makeWASocket({
             version,
-            auth: { creds: state.creds, keys: state.keys },
-            logger: pino({ level: 'silent' }),
-            browser: Browsers.ubuntu('Chrome'),
+            auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })) },
+            logger: pino({ level: "silent" }),
+            browser: Browsers.ubuntu("Chrome"),
             connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 0,
             keepAliveIntervalMs: 10000,
+            syncFullHistory: false,
+            markOnlineOnConnect: false,
+            generateHighQualityLinkPreview: false
         });
 
-        let pairingCompleted = false;
+        let codeSent = false;
+        let paired = false;
+        let responseSent = false;
 
-        // Setup timeout for pairing process (60 seconds)
         const timeout = setTimeout(() => {
-            if (!pairingCompleted) {
+            if (!paired && !responseSent) {
+                responseSent = true;
                 tempConn.end();
-                res.status(408).json({ error: 'Pairing timeout. Please try again.' });
-                logger.warn(`Pairing timeout for number: ${cleanNum}`);
+                res.json({ error: "Pairing timeout – please try again." });
             }
-        }, 60000); // 60 seconds
+        }, 60000);
 
         tempConn.ev.on('connection.update', async (update) => {
             const { connection } = update;
-
-            if (connection === 'open') {
-                // Connection successful, send pairing code
+            if (connection === 'open' && !codeSent && !paired) {
                 try {
-                    logger.info(`Requesting pairing code for number: ${cleanNum}`);
                     const code = await tempConn.requestPairingCode(cleanNum);
+                    codeSent = true;
 
-                    pairingCompleted = true;
-                    clearTimeout(timeout);
-
-                    res.json({ success: true, pairingCode: code });
-                    logger.info(`Pairing code sent to client for number: ${cleanNum}`);
-
-                    // Save creds if they are updated during this session
-                    tempConn.ev.on('creds.update', saveCreds);
-
-                    // Close the temporary connection after pairing is complete
-                    setTimeout(() => tempConn.end(), 5000);
-                } catch (e) {
-                    logger.error(`Failed to request pairing code for ${cleanNum}:`, e);
-                    if (!pairingCompleted) {
+                    if (!responseSent) {
+                        responseSent = true;
+                        res.json({ success: true, code: code });
+                        console.log(`📱 Pairing code sent for ${cleanNum}`);
+                    }
+                } catch (err) {
+                    console.error("Pairing code request failed:", err);
+                    if (!responseSent) {
+                        responseSent = true;
                         clearTimeout(timeout);
-                        res.status(500).json({ error: 'Error getting pairing code. Please try again.' });
+                        res.json({ error: "Failed to get code – please try again." });
                     }
                     tempConn.end();
                 }
             }
         });
 
+        tempConn.ev.on('creds.update', async () => {
+            if (!paired) {
+                paired = true;
+                clearTimeout(timeout);
+
+                await saveCreds();
+                console.log(`✅ Phone paired successfully for ${cleanNum}`);
+                
+                startBot(cleanNum);
+
+                setTimeout(() => {
+                    tempConn.end();
+                    console.log(`🎉 Pairing complete for ${cleanNum}`);
+                }, 2000);
+            }
+        });
+
+        tempConn.ev.on('connection.update', (update) => {
+            if (update.connection === 'close' && !paired && !responseSent) {
+                clearTimeout(timeout);
+                responseSent = true;
+                res.json({ error: "Connection closed unexpectedly" });
+            }
+        });
+
     } catch (e) {
-        logger.error('Pairing error:', e);
-        res.status(500).json({ error: 'Internal Server Error. Please try again.' });
+        console.error("Pairing error:", e);
+        res.json({ error: "Internal Server Error" });
     }
 });
 
-/**
- * HEALTH CHECK ENDPOINT: Checks the server health and number of active bots.
- */
 app.get('/health', (req, res) => {
-    res.json({
-        status: 'running',
-        active_bots: globalConns.size,
-    });
+    res.json({ status: 'running', bots: globalConns.size });
 });
 
-// Start the Express server
-app.listen(PORT, () => logger.info(`Server started and running on port ${PORT}`));
+const server = app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
+
+// ✅ Graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('\n🔄 Shutting down gracefully...');
+    for (const [sessionId, conn] of globalConns.entries()) {
+        try {
+            conn.end();
+            console.log(`❌ Closed: ${sessionId}`);
+        } catch (e) {}
+    }
+    await mongoose.disconnect();
+    console.log('✅ MongoDB disconnected');
+    process.exit(0);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (err) => {
+    console.error('Unhandled Rejection:', err);
+});
