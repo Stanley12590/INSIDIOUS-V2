@@ -5,8 +5,7 @@ const {
     Browsers, 
     makeCacheableSignalKeyStore, 
     fetchLatestBaileysVersion, 
-    DisconnectReason,
-    useMongoDBAuthState  // Muhimu kwa MongoDB auth
+    DisconnectReason 
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const mongoose = require("mongoose");
@@ -48,16 +47,22 @@ const state = {
     conn: null,
     isConnected: false,
     botStartTime: Date.now(),
-    pairingInProgress: false,  // Zuia multiple pairing simultaneously
+    pairingInProgress: false,
     restartAttempts: 0,
-    maxRestartAttempts: 5
+    maxRestartAttempts: 10,
+    mongoConnected: false
 };
 
 // ✅ **MONGODB CONNECTION**
 console.log(fancy("🔗 Connecting to MongoDB..."));
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
+const MONGODB_URI = process.env.MONGODB_URI;
 
-// Schema kwa session storage
+if (!MONGODB_URI) {
+    console.error(fancy("❌ MONGODB_URI is required!"));
+    process.exit(1);
+}
+
+// Session Schema
 const SessionSchema = new mongoose.Schema({
     sessionId: { type: String, required: true, unique: true },
     data: { type: Object, required: true },
@@ -70,12 +75,16 @@ mongoose.connect(MONGODB_URI, {
     serverSelectionTimeoutMS: 30000,
     socketTimeoutMS: 45000,
     maxPoolSize: 10,
-    retryWrites: true
+    retryWrites: true,
+    w: 'majority'
 })
-.then(() => console.log(fancy("✅ MongoDB Connected")))
+.then(() => {
+    console.log(fancy("✅ MongoDB Connected"));
+    state.mongoConnected = true;
+})
 .catch((err) => {
-    console.log(fancy("❌ MongoDB Connection FAILED: " + err.message));
-    // Endelea bila MongoDB - fallback kwa file system
+    console.error(fancy("❌ MongoDB Connection FAILED: " + err.message));
+    // Continue anyway - will retry
 });
 
 // ✅ **CUSTOM AUTH STATE FOR MONGODB**
@@ -85,7 +94,6 @@ async function useMongoAuthState(sessionId = 'insidious_session') {
         keys: {}
     };
 
-    // Soma kutoka MongoDB
     const readData = async () => {
         try {
             const doc = await SessionModel.findOne({ sessionId });
@@ -96,22 +104,11 @@ async function useMongoAuthState(sessionId = 'insidious_session') {
                 };
             }
         } catch (e) {
-            console.log(fancy("⚠️ MongoDB read failed, using file fallback"));
+            console.log(fancy("⚠️ MongoDB read failed, using default"));
         }
-        
-        // Fallback kwa file system
-        try {
-            const filePath = path.join(__dirname, 'insidious_session', 'creds.json');
-            if (fs.existsSync(filePath)) {
-                const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                return { creds: data, keys: {} };
-            }
-        } catch (e) {}
-        
         return defaultState;
     };
 
-    // Andika kwenye MongoDB
     const writeData = async (data) => {
         try {
             await SessionModel.findOneAndUpdate(
@@ -127,14 +124,7 @@ async function useMongoAuthState(sessionId = 'insidious_session') {
                 { upsert: true, new: true }
             );
         } catch (e) {
-            console.log(fancy("⚠️ MongoDB write failed, using file fallback"));
-            // Fallback kwa file
-            const dir = path.join(__dirname, 'insidious_session');
-            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-            fs.writeFileSync(
-                path.join(dir, 'creds.json'),
-                JSON.stringify(data.creds, null, 2)
-            );
+            console.error(fancy("❌ Failed to save session:"), e.message);
         }
     };
 
@@ -190,7 +180,7 @@ try {
 // ✅ **MAIN BOT FUNCTION**
 async function startBot() {
     try {
-        // Zuia multiple instances
+        // Prevent multiple instances
         if (state.conn) {
             console.log(fancy("⚠️ Bot already running, skipping restart"));
             return;
@@ -198,19 +188,34 @@ async function startBot() {
 
         console.log(fancy("🚀 Starting INSIDIOUS..."));
         
-        // ✅ **AUTHENTICATION - MongoDB Priority**
+        // Wait for MongoDB if not connected
+        let retries = 0;
+        while (!state.mongoConnected && retries < 10) {
+            console.log(fancy(`⏳ Waiting for MongoDB... (${retries + 1}/10)`));
+            await new Promise(r => setTimeout(r, 2000));
+            retries++;
+        }
+
+        if (!state.mongoConnected) {
+            console.error(fancy("❌ MongoDB not available, retrying in 30s..."));
+            setTimeout(() => startBot(), 30000);
+            return;
+        }
+        
+        // ✅ **AUTHENTICATION - MongoDB Only**
         let authState;
         try {
             authState = await useMongoAuthState();
             console.log(fancy("✅ Using MongoDB Auth State"));
         } catch (e) {
-            console.log(fancy("⚠️ Falling back to File Auth State"));
-            authState = await useMultiFileAuthState('insidious_session');
+            console.error(fancy("❌ Auth state error:"), e.message);
+            setTimeout(() => startBot(), 10000);
+            return;
         }
 
         const { version } = await fetchLatestBaileysVersion();
 
-        // ✅ **CREATE CONNECTION - IMPROVED CONFIG**
+        // ✅ **CREATE CONNECTION - OPTIMIZED FOR RAILWAY/VERCEL**
         const conn = makeWASocket({
             version,
             logger: pino({ level: "silent" }),
@@ -223,33 +228,34 @@ async function startBot() {
             msgRetryCounterCache,
             syncFullHistory: false,
             connectTimeoutMs: 60000,
-            keepAliveIntervalMs: 30000,  // Ongeza keep-alive
+            keepAliveIntervalMs: 30000,
             markOnlineOnConnect: true,
             defaultQueryTimeoutMs: 20000,
-            // Muhimu kwa multi-device stability
             shouldSyncHistoryMessage: () => false,
             shouldIgnoreJid: jid => jid?.includes('broadcast'),
-            // Retry configuration
             retryRequestDelayMs: 250,
             maxMsgRetryCount: 5,
             fireInitQueries: true,
-            // App state sync
             appStateMacVerification: {
                 patch: true,
                 snapshot: true
-            }
+            },
+            // Important for cloud hosting
+            emitOwnEvents: true,
+            syncFullHistory: false
         });
 
         state.conn = conn;
         state.botStartTime = Date.now();
         state.restartAttempts = 0;
 
-        // ✅ **CONNECTION EVENT HANDLER - IMPROVED**
+        // ✅ **CONNECTION EVENT HANDLER**
         conn.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
             
             if (qr) {
                 console.log(fancy("📱 QR Code generated - ready for scanning"));
+                // QR code available - you can emit this to frontend if needed
             }
 
             if (connection === 'open') {
@@ -300,6 +306,9 @@ async function startBot() {
 ⚡ *Status:* ONLINE & ACTIVE
 
 📊 *ALL FEATURES ACTIVE:*
+🛡️ Anti Bugs: ✅
+🤖 Anti Bot: ✅
+📢 Anti Mention: ✅
 🛡️ Anti View Once: ✅
 🗑️ Anti Delete: ✅
 🤖 AI Chatbot: ✅
@@ -310,11 +319,13 @@ async function startBot() {
 🎉 Welcome/Goodbye: ✅
 
 🔧 *Commands:* All working
-📁 *Database:* Connected
+📁 *Database:* MongoDB Connected
 🚀 *Performance:* Optimal
 
 👑 *Developer:* STANYTZ
-💾 *Version:* 2.1.1 | Year: 2025`;
+💾 *Version:* 2.1.2 | Year: 2025
+
+🌐 *Hosting:* Railway + Vercel Ready`;
 
                                 await conn.sendMessage(ownerJid, { 
                                     image: { 
@@ -349,7 +360,6 @@ async function startBot() {
                 
                 console.log(fancy(`📊 Disconnect reason: ${statusCode} - ${errorMessage}`));
                 
-                // Handling specific error codes
                 const shouldReconnect = ![
                     DisconnectReason.loggedOut,
                     DisconnectReason.badSession,
@@ -358,7 +368,7 @@ async function startBot() {
 
                 if (shouldReconnect && state.restartAttempts < state.maxRestartAttempts) {
                     state.restartAttempts++;
-                    const delay = Math.min(state.restartAttempts * 5000, 30000); // Exponential backoff
+                    const delay = Math.min(state.restartAttempts * 5000, 60000);
                     
                     console.log(fancy(`🔄 Restarting bot in ${delay/1000}s... (Attempt ${state.restartAttempts}/${state.maxRestartAttempts})`));
                     
@@ -367,9 +377,13 @@ async function startBot() {
                     }, delay);
                 } else if (state.restartAttempts >= state.maxRestartAttempts) {
                     console.log(fancy("❌ Max restart attempts reached. Manual intervention required."));
+                    // Keep trying every 5 minutes
+                    setTimeout(() => {
+                        state.restartAttempts = 0;
+                        startBot();
+                    }, 300000);
                 } else {
                     console.log(fancy("🚫 Logged out or bad session. Please scan QR or pair again."));
-                    // Clear session if logged out
                     if (statusCode === DisconnectReason.loggedOut) {
                         try {
                             await SessionModel.deleteOne({ sessionId: 'insidious_session' });
@@ -380,7 +394,7 @@ async function startBot() {
             }
         });
 
-        // ✅ **CREDENTIALS UPDATE - SAVE TO MONGODB**
+        // ✅ **CREDENTIALS UPDATE**
         conn.ev.on('creds.update', async () => {
             try {
                 await authState.saveCreds();
@@ -403,7 +417,7 @@ async function startBot() {
         // ✅ **GROUP UPDATE HANDLER**
         conn.ev.on('group-participants.update', async (update) => {
             try {
-                if (handler?.handleGroupUpdate) {
+                if (handler && handler.handleGroupUpdate) {
                     await handler.handleGroupUpdate(conn, update);
                 }
             } catch (error) {
@@ -414,7 +428,7 @@ async function startBot() {
         // ✅ **CALL HANDLER**
         conn.ev.on('call', async (call) => {
             try {
-                if (handler?.handleCall) {
+                if (handler && handler.handleCall) {
                     await handler.handleCall(conn, call);
                 }
             } catch (error) {
@@ -441,10 +455,9 @@ startBot();
 
 // ==================== HTTP ENDPOINTS ====================
 
-// ✅ **IMPROVED PAIRING ENDPOINT**
+// ✅ **PAIRING ENDPOINT**
 app.get('/pair', async (req, res) => {
     try {
-        // Zuia multiple pairing simultaneously
         if (state.pairingInProgress) {
             return res.json({ 
                 success: false, 
@@ -486,7 +499,6 @@ app.get('/pair', async (req, res) => {
         console.log(fancy(`🔑 Generating pairing code for: ${cleanNum}`));
         
         try {
-            // Tengeneza pairing code
             const code = await state.conn.requestPairingCode(cleanNum);
             
             console.log(fancy(`✅ Pairing code generated: ${code}`));
@@ -502,7 +514,6 @@ app.get('/pair', async (req, res) => {
         } catch (err) {
             console.error(fancy("❌ Pairing failed:"), err.message);
             
-            // Specific error handling
             if (err.message?.includes("already paired") || err.output?.statusCode === 409) {
                 res.json({ 
                     success: true, 
@@ -521,7 +532,6 @@ app.get('/pair', async (req, res) => {
                 });
             }
         } finally {
-            // Release lock after 10 seconds (cooldown)
             setTimeout(() => {
                 state.pairingInProgress = false;
             }, 10000);
@@ -551,12 +561,12 @@ app.get('/unpair', async (req, res) => {
         }
         
         let result = false;
-        if (handler?.unpairNumber) {
+        if (handler && handler.unpairNumber) {
             result = await handler.unpairNumber(cleanNum);
         } else {
             return res.json({ 
                 success: false, 
-                error: "Unpair function not available in handler" 
+                error: "Unpair function not available" 
             });
         }
         
@@ -571,7 +581,7 @@ app.get('/unpair', async (req, res) => {
     }
 });
 
-// ✅ **HEALTH CHECK - IMPROVED**
+// ✅ **HEALTH CHECK**
 app.get('/health', (req, res) => {
     const uptime = process.uptime();
     const hours = Math.floor(uptime / 3600);
@@ -582,10 +592,11 @@ app.get('/health', (req, res) => {
         status: 'healthy',
         connected: state.isConnected,
         uptime: `${hours}h ${minutes}m ${seconds}s`,
-        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        database: state.mongoConnected ? 'connected' : 'disconnected',
         pairingInProgress: state.pairingInProgress,
         restartAttempts: state.restartAttempts,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        version: '2.1.2'
     });
 });
 
@@ -612,11 +623,12 @@ app.get('/botinfo', (req, res) => {
         pairedOwners: pairedCount,
         connected: state.isConnected,
         uptime: Date.now() - state.botStartTime,
-        platform: state.conn.user?.platform || 'unknown'
+        platform: state.conn.user?.platform || 'unknown',
+        mongoConnected: state.mongoConnected
     });
 });
 
-// ✅ **FORCE RECONNECT ENDPOINT (For emergencies)**
+// ✅ **FORCE RECONNECT ENDPOINT**
 app.get('/reconnect', async (req, res) => {
     try {
         if (state.conn) {
@@ -633,6 +645,16 @@ app.get('/reconnect', async (req, res) => {
     }
 });
 
+// ✅ **QR CODE ENDPOINT (For frontend)**
+app.get('/qr', async (req, res) => {
+    // This would require additional setup for QR generation
+    // For now, check console logs
+    res.json({
+        success: state.isConnected,
+        message: state.isConnected ? "Bot already connected" : "Check console for QR code"
+    });
+});
+
 // ✅ **START SERVER**
 app.listen(PORT, () => {
     console.log(fancy(`🌐 Web Interface: http://localhost:${PORT}`));
@@ -642,7 +664,7 @@ app.listen(PORT, () => {
     console.log(fancy(`❤️ Health: http://localhost:${PORT}/health`));
     console.log(fancy(`🔄 Reconnect: http://localhost:${PORT}/reconnect`));
     console.log(fancy("👑 Developer: STANYTZ"));
-    console.log(fancy("📅 Version: 2.1.2 | MongoDB Edition"));
+    console.log(fancy("📅 Version: 2.1.2 | Railway + Vercel Edition"));
 });
 
 module.exports = app;
