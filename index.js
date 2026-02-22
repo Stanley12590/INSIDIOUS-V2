@@ -1,13 +1,20 @@
 const express = require('express');
-const { default: makeWASocket, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason, initAuthCreds, BufferJSON } = require("@whiskeysockets/baileys");
+const {
+    default: makeWASocket,
+    Browsers,
+    makeCacheableSignalKeyStore,
+    fetchLatestBaileysVersion,
+    DisconnectReason,
+    initAuthCreds,
+    BufferJSON
+} = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const mongoose = require("mongoose");
 const path = require("path");
-const fs = require('fs');
 
 const handler = require('./handler');
 
-// ✅ FANCY FUNCTION
+// Fancy text formatting function
 function fancy(text) {
     if (!text || typeof text !== 'string') return text;
     const fancyMap = {
@@ -21,21 +28,30 @@ function fancy(text) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ MONGODB SCHEMA
+// MongoDB schema
 const AuthSchema = new mongoose.Schema({ sessionId: String, id: String, data: String });
 const AuthDB = mongoose.models.AuthDB || mongoose.model('AuthDB', AuthSchema);
 
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
+// Improved: Removed hardcoded credentials for security
+const MONGODB_URI = process.env.MONGODB_URI;
 
-mongoose.connect(MONGODB_URI).then(async () => {
-    console.log(fancy("✅ MongoDB Connected"));
-    const savedSessions = await AuthDB.distinct('sessionId');
-    for (const sessionId of savedSessions) {
-        if (sessionId !== 'temp_pairing') startBot(sessionId);
-    }
-});
+if (!MONGODB_URI) {
+    throw new Error("MONGODB_URI is not set in environment variables.");
+}
 
-// ✅ SESSION MANAGER (MongoDB)
+mongoose.connect(MONGODB_URI)
+    .then(async () => {
+        console.log(fancy("✅ MongoDB Connected"));
+        const savedSessions = await AuthDB.distinct('sessionId');
+        for (const sessionId of savedSessions) {
+            if (sessionId !== 'temp_pairing') startBot(sessionId);
+        }
+    })
+    .catch(err => {
+        console.error("❌ MongoDB Connection Error:", err);
+    });
+
+// Session Manager using MongoDB
 async function useMongoDBAuthState(sessionId) {
     const writeData = async (data, id) => {
         const stringified = JSON.stringify(data, BufferJSON.replacer);
@@ -71,10 +87,10 @@ async function useMongoDBAuthState(sessionId) {
                             else await removeData(`${category}-${id}`);
                         }
                     }
-                }
-            }
+                },
+            },
         },
-        saveCreds: () => writeData(creds, 'creds')
+        saveCreds: () => writeData(creds, 'creds'),
     };
 }
 
@@ -105,6 +121,7 @@ async function startBot(sessionId) {
             if (connection === 'open') {
                 console.log(fancy(`✅ Bot Online: ${sessionId}`));
                 try {
+                    // Ensure conn.user.id exists before sending message
                     if (conn.user && conn.user.id) {
                         await conn.sendMessage(conn.user.id, { text: fancy("insidious bot connected successfully!") });
                     }
@@ -126,7 +143,9 @@ async function startBot(sessionId) {
         });
 
         conn.ev.on('creds.update', saveCreds);
-        conn.ev.on('messages.upsert', async (m) => { if (handler) handler(conn, m); });
+        if (handler) {
+            conn.ev.on('messages.upsert', async (m) => handler(conn, m));
+        }
 
         return conn;
     } catch (e) {
@@ -134,20 +153,20 @@ async function startBot(sessionId) {
     }
 }
 
+// Middleware for serving static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ✅ PAIRING ENDPOINT – COMPLETELY FIXED
+// Pairing endpoint
 app.get('/pair', async (req, res) => {
-    let num = req.query.num;
-    if (!num) return res.json({ error: "No number provided" });
+    const num = req.query.num;
+    if (!num) return res.status(400).json({ error: "No number provided" });
 
     const cleanNum = num.replace(/[^0-9]/g, '');
     if (cleanNum.length < 10 || cleanNum.length > 15) {
-        return res.json({ error: "Invalid number – must be 10-15 digits" });
+        return res.status(400).json({ error: "Invalid number – must be 10-15 digits" });
     }
 
     try {
-        // Clear any existing session
         await AuthDB.deleteMany({ sessionId: cleanNum });
 
         const { state, saveCreds } = await useMongoDBAuthState(cleanNum);
@@ -166,39 +185,28 @@ app.get('/pair', async (req, res) => {
             generateHighQualityLinkPreview: false
         });
 
-        let codeSent = false;
         let paired = false;
-        let responseSent = false;
-
         const timeout = setTimeout(() => {
-            if (!paired && !responseSent) {
-                responseSent = true;
+            if (!paired) {
                 tempConn.end();
-                res.json({ error: "Pairing timeout – please try again." });
+                res.status(408).json({ error: "Pairing timeout – please try again." });
             }
         }, 60000);
 
         tempConn.ev.on('connection.update', async (update) => {
             const { connection } = update;
-            if (connection === 'open' && !codeSent && !paired) {
+            if (connection === 'open' && !paired) {
                 try {
                     const code = await tempConn.requestPairingCode(cleanNum);
-                    codeSent = true;
-
-                    if (!responseSent) {
-                        responseSent = true;
-                        res.json({ success: true, code: code });
-                        console.log(`📱 Pairing code sent for ${cleanNum}`);
-                    }
+                    res.json({ success: true, code: code });
+                    console.log(`📱 Pairing code sent for ${cleanNum}`);
+                    paired = true;
+                    clearTimeout(timeout);
                 } catch (err) {
                     console.error("Pairing code request failed:", err);
-                    if (!responseSent) {
-                        responseSent = true;
-                        clearTimeout(timeout);
-                        res.json({ error: "Failed to get code – please try again." });
-                    }
-                    tempConn.end();
+                    res.status(500).json({ error: "Failed to get code – please try again." });
                 }
+                tempConn.end();
             }
         });
 
@@ -209,37 +217,25 @@ app.get('/pair', async (req, res) => {
 
                 await saveCreds();
                 console.log(`✅ Phone paired successfully for ${cleanNum}`);
-                
                 startBot(cleanNum);
 
-                setTimeout(() => {
-                    tempConn.end();
-                    console.log(`🎉 Pairing complete for ${cleanNum}`);
-                }, 2000);
-            }
-        });
-
-        tempConn.ev.on('connection.update', (update) => {
-            if (update.connection === 'close' && !paired && !responseSent) {
-                clearTimeout(timeout);
-                responseSent = true;
-                res.json({ error: "Connection closed unexpectedly" });
+                tempConn.end();
+                console.log(`🎉 Pairing complete for ${cleanNum}`);
             }
         });
 
     } catch (e) {
         console.error("Pairing error:", e);
-        res.json({ error: "Internal Server Error" });
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
+// Health Check endpoint
 app.get('/health', (req, res) => {
     res.json({ status: 'running', bots: globalConns.size });
 });
 
-const server = app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
-
-// ✅ Graceful shutdown
+// Graceful shutdown
 process.on('SIGINT', async () => {
     console.log('\n🔄 Shutting down gracefully...');
     for (const [sessionId, conn] of globalConns.entries()) {
@@ -260,3 +256,5 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (err) => {
     console.error('Unhandled Rejection:', err);
 });
+
+app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
