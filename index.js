@@ -1,42 +1,35 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, Browsers, makeCacheableSignalKeyStore, fetchLatestBaileysVersion, DisconnectReason } = require("@whiskeysockets/baileys");
 const pino = require("pino");
 const mongoose = require("mongoose");
 const path = require("path");
-const fs = require('fs');
+const fs = require('fs-extra');
 
 // ==================== HANDLER ====================
 const handler = require('./handler');
 
+// ==================== MODELS & HELPERS ====================
+const Session = require('./models/Session');
+const useMongoAuthState = require('./lib/mongoAuth');
+
 // ✅ **FANCY FUNCTION**
 function fancy(text) {
     if (!text || typeof text !== 'string') return text;
-    
-    try {
-        const fancyMap = {
-            a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ',
-            j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ',
-            s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ',
-            A: 'ᴀ', B: 'ʙ', C: 'ᴄ', D: 'ᴅ', E: 'ᴇ', F: 'ꜰ', G: 'ɢ', H: 'ʜ', I: 'ɪ',
-            J: 'ᴊ', K: 'ᴋ', L: 'ʟ', M: 'ᴍ', N: 'ɴ', O: 'ᴏ', P: 'ᴘ', Q: 'ǫ', R: 'ʀ',
-            S: 'ꜱ', T: 'ᴛ', U: 'ᴜ', V: 'ᴠ', W: 'ᴡ', X: 'x', Y: 'ʏ', Z: 'ᴢ'
-        };
-        
-        let result = '';
-        for (let i = 0; i < text.length; i++) {
-            const char = text[i];
-            result += fancyMap[char] || char;
-        }
-        return result;
-    } catch (e) {
-        return text;
-    }
+    const map = {
+        a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ',
+        j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ',
+        s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ',
+        A: 'ᴀ', B: 'ʙ', C: 'ᴄ', D: 'ᴅ', E: 'ᴇ', F: 'ꜰ', G: 'ɢ', H: 'ʜ', I: 'ɪ',
+        J: 'ᴊ', K: 'ᴋ', L: 'ʟ', M: 'ᴍ', N: 'ɴ', O: 'ᴏ', P: 'ᴘ', Q: 'ǫ', R: 'ʀ',
+        S: 'ꜱ', T: 'ᴛ', U: 'ᴜ', V: 'ᴠ', W: 'ᴡ', X: 'x', Y: 'ʏ', Z: 'ᴢ'
+    };
+    return text.split('').map(c => map[c] || c).join('');
 }
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ **MONGODB CONNECTION (OPTIONAL)**
+// ✅ **MONGODB CONNECTION**
 console.log(fancy("🔗 Connecting to MongoDB..."));
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://sila_md:sila0022@sila.67mxtd7.mongodb.net/insidious?retryWrites=true&w=majority";
 
@@ -45,13 +38,8 @@ mongoose.connect(MONGODB_URI, {
     socketTimeoutMS: 45000,
     maxPoolSize: 10
 })
-.then(() => {
-    console.log(fancy("✅ MongoDB Connected"));
-})
-.catch((err) => {
-    console.log(fancy("❌ MongoDB Connection FAILED"));
-    console.log(fancy("💡 Error: " + err.message));
-});
+.then(() => console.log(fancy("✅ MongoDB Connected")))
+.catch(err => console.log(fancy("❌ MongoDB Connection FAILED: " + err.message)));
 
 // ✅ **MIDDLEWARE**
 app.use(express.json());
@@ -63,18 +51,8 @@ if (!fs.existsSync(path.join(__dirname, 'public'))) {
 }
 
 // ✅ **SIMPLE ROUTES**
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-app.get('/dashboard', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-});
-
-// ✅ **GLOBAL VARIABLES**
-let globalConn = null;
-let isConnected = false;
-let botStartTime = Date.now();
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 
 // ✅ **LOAD CONFIG**
 let config = {};
@@ -92,80 +70,59 @@ try {
     };
 }
 
-// ✅ **MAIN BOT FUNCTION**
-async function startBot() {
-    try {
-        console.log(fancy("🚀 Starting INSIDIOUS..."));
-        
-        // ✅ **AUTHENTICATION**
-        const { state, saveCreds } = await useMultiFileAuthState('insidious_session');
-        const { version } = await fetchLatestBaileysVersion();
+// ==================== MULTI‑SESSION MANAGEMENT ====================
+/** @type {Map<string, { socket: any, saveCreds: function, startTime: number }>} */
+const activeSessions = new Map();
 
-        // ✅ **CREATE CONNECTION**
-        const conn = makeWASocket({
-            version,
-            auth: { 
-                creds: state.creds, 
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" })) 
-            },
-            logger: pino({ level: "silent" }),
-            browser: Browsers.macOS("Safari"),
-            syncFullHistory: false,
-            connectTimeoutMs: 60000,
-            keepAliveIntervalMs: 10000,
-            markOnlineOnConnect: true
-        });
+/**
+ * Start a WhatsApp client for a specific phone number.
+ * @param {string} phoneNumber - e.g. "255712345678"
+ * @returns {Promise<any>} the socket
+ */
+async function startSocket(phoneNumber) {
+    console.log(fancy(`🚀 Starting session for ${phoneNumber}`));
 
-        globalConn = conn;
-        botStartTime = Date.now();
+    const { state, saveCreds } = await useMongoAuthState(phoneNumber);
+    const { version } = await fetchLatestBaileysVersion();
 
-        // ✅ **CONNECTION EVENT HANDLER**
-        conn.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect } = update;
-            
-            if (connection === 'open') {
-                console.log(fancy("👹 INSIDIOUS: THE LAST KEY ACTIVATED"));
-                console.log(fancy("✅ Bot is now online"));
-                
-                isConnected = true;
-                
-                // Get bot info
-                let botName = conn.user?.name || "INSIDIOUS";
-                let botNumber = "Unknown";
-                let botId = conn.user?.id || "Unknown";
-                
-                if (conn.user?.id) {
-                    botNumber = conn.user.id.split(':')[0] || "Unknown";
-                }
-                
-                // 🔥 GET BOT ID AND PAIRED COUNT FROM HANDLER
-                const botSecret = handler.getBotId ? handler.getBotId() : 'Unknown';
-                const pairedCount = handler.getPairedNumbers ? handler.getPairedNumbers().length : 0;
-                
-                console.log(fancy(`🤖 Name: ${botName}`));
-                console.log(fancy(`📞 Number: ${botNumber}`));
-                console.log(fancy(`🆔 Bot ID: ${botSecret}`));
-                console.log(fancy(`👥 Paired Owners: ${pairedCount}`));
-                
-                // ✅ **INITIALIZE HANDLER**
-                try {
-                    if (handler && typeof handler.init === 'function') {
-                        await handler.init(conn);
-                        console.log(fancy("✅ Handler initialized"));
-                    }
-                } catch (e) {
-                    console.error(fancy("❌ Handler init error:"), e.message);
-                }
-                
-                // ✅ **SEND WELCOME MESSAGE TO OWNER**
+    const socket = makeWASocket({
+        version,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }))
+        },
+        logger: pino({ level: "silent" }),
+        browser: Browsers.macOS("Safari"),
+        syncFullHistory: false,
+        connectTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000,
+        markOnlineOnConnect: true
+    });
+
+    activeSessions.set(phoneNumber, {
+        socket,
+        saveCreds,
+        startTime: Date.now()
+    });
+
+    // ---- Connection Events ----
+    socket.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect } = update;
+
+        if (connection === 'open') {
+            console.log(fancy(`✅ ${phoneNumber} is now online`));
+
+            // Optionally send welcome message to owner numbers
+            if (config.ownerNumber.includes(phoneNumber)) {
                 setTimeout(async () => {
                     try {
-                        if (config.ownerNumber && config.ownerNumber.length > 0) {
-                            const ownerNum = config.ownerNumber[0].replace(/[^0-9]/g, '');
-                            if (ownerNum.length >= 10) {
-                                const ownerJid = ownerNum + '@s.whatsapp.net';
-                                
-                                const welcomeMsg = `
+                        const botName = socket.user?.name || "INSIDIOUS";
+                        const botNumber = socket.user?.id?.split(':')[0] || phoneNumber;
+                        const botId = socket.user?.id || "Unknown";
+                        
+                        const pairedCount = handler.getPairedNumbers ? handler.getPairedNumbers().length : 0;
+                        
+                        const welcomeMsg = `
 ╭─── • 🥀 • ───╮
    INSIDIOUS: THE LAST KEY
 ╰─── • 🥀 • ───╯
@@ -173,7 +130,7 @@ async function startBot() {
 ✅ *Bot Connected Successfully!*
 🤖 *Name:* ${botName}
 📞 *Number:* ${botNumber}
-🆔 *Bot ID:* ${botSecret}
+🆔 *Bot ID:* ${botId}
 👥 *Paired Owners:* ${pairedCount}
 
 ⚡ *Status:* ONLINE & ACTIVE
@@ -194,133 +151,179 @@ async function startBot() {
 
 👑 *Developer:* STANYTZ
 💾 *Version:* 2.1.1 | Year: 2025`;
-                                
-                                // Send with image and forwarded style
-                                await conn.sendMessage(ownerJid, { 
-                                    image: { 
-                                        url: config.botImage || "https://files.catbox.moe/f3c07u.jpg"
-                                    },
-                                    caption: welcomeMsg,
-                                    contextInfo: { 
-                                        isForwarded: true,
-                                        forwardingScore: 999,
-                                        forwardedNewsletterMessageInfo: { 
-                                            newsletterJid: config.newsletterJid || "120363404317544295@newsletter",
-                                            newsletterName: config.botName || "INSIDIOUS BOT"
-                                        }
-                                    }
-                                });
-                                console.log(fancy("✅ Welcome message sent to owner"));
+
+                        await socket.sendMessage(phoneNumber + '@s.whatsapp.net', { 
+                            image: { url: config.botImage || "https://files.catbox.moe/f3c07u.jpg" },
+                            caption: welcomeMsg,
+                            contextInfo: { 
+                                isForwarded: true,
+                                forwardingScore: 999,
+                                forwardedNewsletterMessageInfo: { 
+                                    newsletterJid: config.newsletterJid || "120363404317544295@newsletter",
+                                    newsletterName: config.botName || "INSIDIOUS BOT"
+                                }
                             }
-                        }
+                        });
+                        console.log(fancy(`✅ Welcome message sent to owner ${phoneNumber}`));
                     } catch (e) {
-                        console.log(fancy("⚠️ Could not send welcome message:"), e.message);
+                        console.log(fancy(`⚠️ Could not send welcome message to ${phoneNumber}: ${e.message}`));
                     }
                 }, 3000);
             }
-            
-            if (connection === 'close') {
-                console.log(fancy("🔌 Connection closed"));
-                isConnected = false;
-                
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                
-                if (shouldReconnect) {
-                    console.log(fancy("🔄 Restarting bot in 5 seconds..."));
-                    setTimeout(() => {
-                        startBot();
-                    }, 5000);
-                } else {
-                    console.log(fancy("🚫 Logged out. Please scan QR again."));
-                }
+        }
+
+        if (connection === 'close') {
+            console.log(fancy(`🔌 Connection closed for ${phoneNumber}`));
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+            if (shouldReconnect) {
+                console.log(fancy(`🔄 Restarting session for ${phoneNumber} in 5 seconds...`));
+                setTimeout(() => {
+                    startSocket(phoneNumber);
+                }, 5000);
+            } else {
+                console.log(fancy(`🚫 Logged out for ${phoneNumber}. Removing session.`));
+                activeSessions.delete(phoneNumber);
+                // Optionally delete from DB to force re-pair next time
+                // await Session.findByIdAndDelete(phoneNumber);
             }
-        });
+        }
+    });
 
-        // ✅ **CREDENTIALS UPDATE**
-        conn.ev.on('creds.update', saveCreds);
+    socket.ev.on('creds.update', saveCreds);
 
-        // ✅ **MESSAGE HANDLER**
-        conn.ev.on('messages.upsert', async (m) => {
-            try {
-                if (handler && typeof handler === 'function') {
-                    await handler(conn, m);
-                }
-            } catch (error) {
-                console.error("Message handler error:", error.message);
+    // ---- Message Handler ----
+    socket.ev.on('messages.upsert', async (m) => {
+        try {
+            if (handler && typeof handler === 'function') {
+                await handler(socket, m);
             }
-        });
+        } catch (error) {
+            console.error(`Message handler error for ${phoneNumber}:`, error.message);
+        }
+    });
 
-        // ✅ **GROUP UPDATE HANDLER**
-        conn.ev.on('group-participants.update', async (update) => {
-            try {
-                if (handler && handler.handleGroupUpdate) {
-                    await handler.handleGroupUpdate(conn, update);
-                }
-            } catch (error) {
-                console.error("Group update error:", error.message);
+    // ---- Group Updates ----
+    socket.ev.on('group-participants.update', async (update) => {
+        try {
+            if (handler && handler.handleGroupUpdate) {
+                await handler.handleGroupUpdate(socket, update);
             }
-        });
+        } catch (error) {
+            console.error(`Group update error for ${phoneNumber}:`, error.message);
+        }
+    });
 
-        // ✅ **CALL HANDLER**
-        conn.ev.on('call', async (call) => {
-            try {
-                if (handler && handler.handleCall) {
-                    await handler.handleCall(conn, call);
-                }
-            } catch (error) {
-                console.error("Call handler error:", error.message);
+    // ---- Call Handler ----
+    socket.ev.on('call', async (call) => {
+        try {
+            if (handler && handler.handleCall) {
+                await handler.handleCall(socket, call);
             }
-        });
+        } catch (error) {
+            console.error(`Call handler error for ${phoneNumber}:`, error.message);
+        }
+    });
 
-        console.log(fancy("🚀 Bot ready for pairing via web interface"));
-        
-    } catch (error) {
-        console.error("Start error:", error.message);
-        // Restart once on error
-        setTimeout(() => {
-            startBot();
-        }, 10000);
+    return socket;
+}
+
+/**
+ * Load all existing sessions from MongoDB and start them.
+ */
+async function loadAllSessions() {
+    const sessions = await Session.find({});
+    console.log(fancy(`📂 Found ${sessions.length} saved sessions`));
+    for (const sess of sessions) {
+        startSocket(sess._id).catch(err => {
+            console.error(fancy(`❌ Failed to start session for ${sess._id}: ${err.message}`));
+        });
     }
 }
 
-// ✅ **START BOT**
-startBot();
+// Start all saved sessions after DB is connected
+mongoose.connection.once('open', () => {
+    loadAllSessions();
+});
 
 // ==================== HTTP ENDPOINTS ====================
 
-// ✅ **PAIRING ENDPOINT (8-DIGIT CODE) – HAKUNA CONNECTION CLOSE**
+// ✅ **PAIRING ENDPOINT (8-DIGIT CODE)**
 app.get('/pair', async (req, res) => {
     try {
         let num = req.query.num;
         if (!num) {
             return res.json({ success: false, error: "Provide number! Example: /pair?num=255123456789" });
         }
-        
+
         const cleanNum = num.replace(/[^0-9]/g, '');
         if (cleanNum.length < 10) {
             return res.json({ success: false, error: "Invalid number. Must be at least 10 digits." });
         }
-        
-        // Hakikisha globalConn ipo
-        if (!globalConn) {
-            return res.json({ success: false, error: "Bot is initializing. Please try again in a few seconds." });
+
+        // If a session already exists, return error (or you could reuse it)
+        if (activeSessions.has(cleanNum)) {
+            return res.json({ success: false, error: "A session for this number already exists." });
         }
-        
+
         console.log(fancy(`🔑 Generating 8-digit code for: ${cleanNum}`));
-        
-        // Jaribu kupata code kwa timeout ya sekunde 30
+
+        // Create a temporary socket with empty credentials
+        const { state, saveCreds } = await useMongoAuthState(cleanNum); // creates blank session
+        const { version } = await fetchLatestBaileysVersion();
+
+        const tempSocket = makeWASocket({
+            version,
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }))
+            },
+            logger: pino({ level: "silent" }),
+            browser: Browsers.macOS("Safari"),
+            syncFullHistory: false,
+            connectTimeoutMs: 60000,
+            keepAliveIntervalMs: 10000,
+            markOnlineOnConnect: true
+        });
+
+        // Save creds when they update
+        tempSocket.ev.on('creds.update', saveCreds);
+
+        // Request the pairing code
         const code = await Promise.race([
-            globalConn.requestPairingCode(cleanNum),
+            tempSocket.requestPairingCode(cleanNum),
             new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout - no response from WhatsApp')), 30000))
         ]);
-        
-        res.json({ 
-            success: true, 
+
+        // Send code to client immediately
+        res.json({
+            success: true,
             code: code,
             message: `8-digit pairing code: ${code}`
         });
-        
+
+        // When the socket connects, add it to active sessions and attach all handlers
+        tempSocket.ev.on('connection.update', async (update) => {
+            const { connection } = update;
+            if (connection === 'open') {
+                console.log(fancy(`✅ Successfully paired ${cleanNum}`));
+                
+                // Replace the temporary socket with a fully managed one
+                tempSocket.end(undefined);
+                
+                // Start the permanent session
+                await startSocket(cleanNum);
+            } else if (connection === 'close') {
+                // If pairing fails (e.g., user didn't complete), clean up the blank session
+                const error = update.lastDisconnect?.error;
+                if (error && !error.message?.includes('already paired')) {
+                    console.log(fancy(`❌ Pairing failed for ${cleanNum}`));
+                    await Session.findByIdAndDelete(cleanNum);
+                }
+            }
+        });
+
     } catch (err) {
         console.error("Pairing error:", err.message);
         if (err.message.includes("already paired")) {
@@ -338,25 +341,24 @@ app.get('/unpair', async (req, res) => {
         if (!num) {
             return res.json({ success: false, error: "Provide number! Example: /unpair?num=255123456789" });
         }
-        
+
         const cleanNum = num.replace(/[^0-9]/g, '');
         if (cleanNum.length < 10) {
             return res.json({ success: false, error: "Invalid number" });
         }
-        
-        // Call handler to unpair
-        let result = false;
-        if (handler && handler.unpairNumber) {
-            result = await handler.unpairNumber(cleanNum);
-        } else {
-            return res.json({ success: false, error: "Unpair function not available in handler" });
+
+        // Close the socket if active
+        const session = activeSessions.get(cleanNum);
+        if (session) {
+            session.socket.end(undefined);
+            activeSessions.delete(cleanNum);
         }
-        
-        res.json({ 
-            success: result, 
-            message: result ? `Number ${cleanNum} unpaired successfully` : `Failed to unpair ${cleanNum}`
-        });
-        
+
+        // Remove from database
+        await Session.findByIdAndDelete(cleanNum);
+
+        res.json({ success: true, message: `Number ${cleanNum} unpaired successfully` });
+
     } catch (err) {
         console.error("Unpair error:", err.message);
         res.json({ success: false, error: "Failed: " + err.message });
@@ -369,37 +371,30 @@ app.get('/health', (req, res) => {
     const hours = Math.floor(uptime / 3600);
     const minutes = Math.floor((uptime % 3600) / 60);
     const seconds = Math.floor(uptime % 60);
-    
+
     res.json({
         status: 'healthy',
-        connected: isConnected,
-        uptime: `${hours}h ${minutes}m ${seconds}s`,
-        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+        activeSessions: activeSessions.size,
+        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        uptime: `${hours}h ${minutes}m ${seconds}s`
     });
 });
 
-// ✅ **BOT INFO ENDPOINT**
+// ✅ **BOT INFO ENDPOINT** (list all active sessions)
 app.get('/botinfo', (req, res) => {
-    if (!globalConn || !globalConn.user) {
-        return res.json({ 
-            success: false,
-            error: "Bot not connected",
-            connected: isConnected
+    const sessionsInfo = [];
+    for (let [phone, data] of activeSessions.entries()) {
+        sessionsInfo.push({
+            phone,
+            connected: !!data.socket.user,
+            uptime: Date.now() - data.startTime
         });
     }
-    
-    const botSecret = handler.getBotId ? handler.getBotId() : 'Unknown';
-    const pairedCount = handler.getPairedNumbers ? handler.getPairedNumbers().length : 0;
-    
+
     res.json({
         success: true,
-        botName: globalConn.user?.name || "INSIDIOUS",
-        botNumber: globalConn.user?.id?.split(':')[0] || "Unknown",
-        botJid: globalConn.user?.id || "Unknown",
-        botSecret: botSecret,
-        pairedOwners: pairedCount,
-        connected: isConnected,
-        uptime: Date.now() - botStartTime
+        activeSessions: sessionsInfo,
+        total: sessionsInfo.length
     });
 });
 
